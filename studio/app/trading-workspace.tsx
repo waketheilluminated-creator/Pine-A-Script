@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import {
   CandlestickSeries, ColorType, createChart, LineSeries,
   type CandlestickData, type IChartApi, type ISeriesApi,
@@ -61,6 +61,7 @@ function calculateEma(candles: Candle[], length: number): LineData<Time>[] {
 
 export function TradingWorkspace() {
   const chartHost = useRef<HTMLDivElement>(null);
+  const editorBodyRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const fastSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
@@ -92,6 +93,8 @@ export function TradingWorkspace() {
   const [aiMessages, setAiMessages] = useState<AIMessage[]>([]);
   const [aiRunning, setAiRunning] = useState(false);
   const [aiError, setAiError] = useState("");
+  const [panelHeight, setPanelHeight] = useState(245);
+  const [consoleWidth, setConsoleWidth] = useState(260);
 
   const last = candles.at(-1);
   const first = candles.at(0);
@@ -204,6 +207,33 @@ export function TradingWorkspace() {
     if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
   };
 
+  const startPanelResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const move = (pointer: PointerEvent) => setPanelHeight(Math.max(150, Math.min(window.innerHeight * 0.65, window.innerHeight - 28 - pointer.clientY)));
+    const stop = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", stop); };
+    window.addEventListener("pointermove", move); window.addEventListener("pointerup", stop);
+  };
+
+  const startConsoleResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const move = (pointer: PointerEvent) => {
+      const bounds = editorBodyRef.current?.getBoundingClientRect();
+      if (bounds) setConsoleWidth(Math.max(180, Math.min(bounds.width * 0.62, bounds.right - pointer.clientX)));
+    };
+    const stop = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", stop); };
+    window.addEventListener("pointermove", move); window.addEventListener("pointerup", stop);
+  };
+
+  const resizePanelWithKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    event.preventDefault(); setPanelHeight((height) => Math.max(150, Math.min(window.innerHeight * 0.65, height + (event.key === "ArrowUp" ? 20 : -20))));
+  };
+
+  const resizeConsoleWithKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault(); setConsoleWidth((width) => Math.max(180, Math.min(520, width + (event.key === "ArrowLeft" ? 20 : -20))));
+  };
+
   const analyzeMarket = async () => {
     const question = aiQuestion.trim();
     if (!question || !aiEndpoint.trim() || !aiModel.trim()) {
@@ -249,7 +279,7 @@ export function TradingWorkspace() {
           <span className="rail-spacer" /><button className="tool-button" title="Settings">⚙</button>
         </nav>
 
-        <section className="main-area">
+        <section className="main-area" style={{ gridTemplateRows: `45px minmax(220px, 1fr) ${panelHeight}px` }}>
           <div className="chart-toolbar">
             <div className="toolbar-cluster">
               <select aria-label="Market" value={symbol} onChange={(e) => { setLoading(true); setSymbol(e.target.value); }} className="time-button" style={{ background: "transparent", border: 0 }}>
@@ -272,9 +302,13 @@ export function TradingWorkspace() {
           </div>
 
           <section className="bottom-panel">
+            {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex -- ARIA separators become interactive when focusable and expose aria-valuenow. */}
+            <div className="panel-resize-handle" role="separator" aria-label="Resize Pine editor panel" aria-orientation="horizontal" aria-valuemin={150} aria-valuemax={700} aria-valuenow={Math.round(panelHeight)} tabIndex={0} onPointerDown={startPanelResize} onKeyDown={resizePanelWithKeyboard} onDoubleClick={() => setPanelHeight(245)}><span /></div>
             <div className="panel-header"><div className="tabs"><button className={`tab-button ${activeTab === "pine" ? "active" : ""}`} onClick={() => setActiveTab("pine")}>Pine Editor</button><button className={`tab-button ${activeTab === "console" ? "active" : ""}`} onClick={() => setActiveTab("console")}>Console</button></div><div className="editor-actions"><button className="run-button" onClick={runPine} disabled={running}>{running ? "Running…" : "▶ Run on chart"}</button></div></div>
-            <div className="editor-body">
+            <div className="editor-body" ref={editorBodyRef} style={{ gridTemplateColumns: `minmax(0, 1fr) 7px ${consoleWidth}px` }}>
               <div className="code-wrap"><pre className="line-numbers">{lineCount}</pre><textarea aria-label="Pine Script editor" className="code-editor" spellCheck={false} value={pine} onChange={(e) => setPine(e.target.value)} /></div>
+              {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex -- ARIA separators become interactive when focusable and expose aria-valuenow. */}
+              <div className="editor-splitter" role="separator" aria-label="Resize compiler console" aria-orientation="vertical" aria-valuemin={180} aria-valuemax={520} aria-valuenow={Math.round(consoleWidth)} tabIndex={0} onPointerDown={startConsoleResize} onKeyDown={resizeConsoleWithKeyboard} onDoubleClick={() => setConsoleWidth(260)}><span /></div>
               <aside className="console"><strong>Compiler output</strong><span className={consoleKind === "normal" ? "" : consoleKind}>{consoleText}</span></aside>
             </div>
           </section>

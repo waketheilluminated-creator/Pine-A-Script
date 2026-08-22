@@ -22,6 +22,8 @@ test("server-renders the πlab trading workspace", async () => {
   assert.match(html, /πlab/);
   assert.match(html, /Derivatives pulse/);
   assert.match(html, /Pine Editor/);
+  assert.match(html, /Resize Pine editor panel/);
+  assert.match(html, /Resize compiler console/);
   assert.match(html, /Create alert/);
   assert.match(html, /AI Analyst/);
   assert.doesNotMatch(html, /Your site is taking shape|react-loading-skeleton/);

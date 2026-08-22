@@ -7,6 +7,7 @@ A focused TradingView-style crypto analysis workspace built on the Pine-A-Script
 - Live Bybit perpetual candlestick charts for BTC, ETH, SOL, and XRP
 - 1m through 1D timeframes with EMA overlays
 - Editable Pine Script v5 subset compiled and executed in the browser
+- Drag-resizable Pine editor height and editor/console split
 - Price alerts with in-app state and browser notifications
 - CCXT-normalized derivatives data from Bybit, Binance, and OKX
 - Open interest, funding rate, mark price, index price, and basis
