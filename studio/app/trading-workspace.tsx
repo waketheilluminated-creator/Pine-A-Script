@@ -6,6 +6,7 @@ import {
   type CandlestickData, type IChartApi, type ISeriesApi,
   type LineData, type Time, type UTCTimestamp,
 } from "lightweight-charts";
+import { savePineSource, usePineSource } from "./pine-source";
 
 type Candle = CandlestickData<Time> & { volume?: number };
 type Interval = "1" | "5" | "15" | "60" | "240" | "D";
@@ -16,19 +17,6 @@ type Derivatives = {
 };
 type PinePlot = { title?: string; data?: (number | null)[] };
 type AIMessage = { id: number; role: "user" | "assistant"; content: string };
-
-const SAMPLE_PINE = `//@version=5
-indicator("Fast / Slow EMA", overlay=true)
-
-fastLength = input.int(9, "Fast length")
-slowLength = input.int(21, "Slow length")
-
-fast = ta.ema(close, fastLength)
-slow = ta.ema(close, slowLength)
-
-plot(fast, "Fast EMA", color=color.aqua)
-plot(slow, "Slow EMA", color=color.orange)
-alertcondition(ta.crossover(fast, slow), "Bullish cross", "Fast EMA crossed above slow EMA")`;
 
 const INTERVALS: { label: string; value: Interval }[] = [
   { label: "1m", value: "1" }, { label: "5m", value: "5" }, { label: "15m", value: "15" },
@@ -74,7 +62,7 @@ export function TradingWorkspace() {
   const [showFast, setShowFast] = useState(true);
   const [showSlow, setShowSlow] = useState(true);
   const [activeTab, setActiveTab] = useState<"pine" | "console">("pine");
-  const [pine, setPine] = useState(SAMPLE_PINE);
+  const pine = usePineSource();
   const [consoleText, setConsoleText] = useState("Ready. Pine Script v5 subset loaded.");
   const [consoleKind, setConsoleKind] = useState<"normal" | "success" | "error">("normal");
   const [running, setRunning] = useState(false);
@@ -100,6 +88,11 @@ export function TradingWorkspace() {
   const first = candles.at(0);
   const change = last && first ? ((last.close - first.open) / first.open) * 100 : 0;
   const lineCount = useMemo(() => pine.split("\n").map((_, i) => i + 1).join("\n"), [pine]);
+
+  const openPineEditorTab = () => {
+    savePineSource(pine);
+    window.open("/pine-editor", "_blank", "noopener,noreferrer");
+  };
 
   useEffect(() => {
     if (!chartHost.current) return;
@@ -304,9 +297,9 @@ export function TradingWorkspace() {
           <section className="bottom-panel">
             {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex -- ARIA separators become interactive when focusable and expose aria-valuenow. */}
             <div className="panel-resize-handle" role="separator" aria-label="Resize Pine editor panel" aria-orientation="horizontal" aria-valuemin={150} aria-valuemax={700} aria-valuenow={Math.round(panelHeight)} tabIndex={0} onPointerDown={startPanelResize} onKeyDown={resizePanelWithKeyboard} onDoubleClick={() => setPanelHeight(245)}><span /></div>
-            <div className="panel-header"><div className="tabs"><button className={`tab-button ${activeTab === "pine" ? "active" : ""}`} onClick={() => setActiveTab("pine")}>Pine Editor</button><button className={`tab-button ${activeTab === "console" ? "active" : ""}`} onClick={() => setActiveTab("console")}>Console</button></div><div className="editor-actions"><button className="run-button" onClick={runPine} disabled={running}>{running ? "Running…" : "▶ Run on chart"}</button></div></div>
+            <div className="panel-header"><div className="tabs"><button className={`tab-button ${activeTab === "pine" ? "active" : ""}`} onClick={() => setActiveTab("pine")}>Pine Editor</button><button className={`tab-button ${activeTab === "console" ? "active" : ""}`} onClick={() => setActiveTab("console")}>Console</button></div><div className="editor-actions"><button className="popout-button" aria-label="Open Pine editor in new tab" title="Open Pine editor in new tab" onClick={openPineEditorTab}>↗ New tab</button><button className="run-button" onClick={runPine} disabled={running}>{running ? "Running…" : "▶ Run on chart"}</button></div></div>
             <div className="editor-body" ref={editorBodyRef} style={{ gridTemplateColumns: `minmax(0, 1fr) 7px ${consoleWidth}px` }}>
-              <div className="code-wrap"><pre className="line-numbers">{lineCount}</pre><textarea aria-label="Pine Script editor" className="code-editor" spellCheck={false} value={pine} onChange={(e) => setPine(e.target.value)} /></div>
+              <div className="code-wrap"><pre className="line-numbers">{lineCount}</pre><textarea aria-label="Pine Script editor" className="code-editor" spellCheck={false} value={pine} onChange={(e) => savePineSource(e.target.value)} /></div>
               {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex -- ARIA separators become interactive when focusable and expose aria-valuenow. */}
               <div className="editor-splitter" role="separator" aria-label="Resize compiler console" aria-orientation="vertical" aria-valuemin={180} aria-valuemax={520} aria-valuenow={Math.round(consoleWidth)} tabIndex={0} onPointerDown={startConsoleResize} onKeyDown={resizeConsoleWithKeyboard} onDoubleClick={() => setConsoleWidth(260)}><span /></div>
               <aside className="console"><strong>Compiler output</strong><span className={consoleKind === "normal" ? "" : consoleKind}>{consoleText}</span></aside>

@@ -22,11 +22,22 @@ test("server-renders the πlab trading workspace", async () => {
   assert.match(html, /πlab/);
   assert.match(html, /Derivatives pulse/);
   assert.match(html, /Pine Editor/);
+  assert.match(html, /Open Pine editor in new tab/);
   assert.match(html, /Resize Pine editor panel/);
   assert.match(html, /Resize compiler console/);
   assert.match(html, /Create alert/);
   assert.match(html, /AI Analyst/);
   assert.doesNotMatch(html, /Your site is taking shape|react-loading-skeleton/);
+});
+
+test("server-renders the synchronized Pine editor tab", async () => {
+  const app = await worker();
+  const response = await app.fetch(new Request("http://localhost/pine-editor", { headers: { accept: "text/html" } }), env, context);
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /<title>Pine Editor — πlab<\/title>/i);
+  assert.match(html, /Changes sync automatically/);
+  assert.match(html, /Return to chart/);
 });
 
 test("AI route validates model connection details before forwarding data", async () => {
