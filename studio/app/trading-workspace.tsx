@@ -14,6 +14,8 @@ type Derivatives = {
   fundingRate: number | null; markPrice: number | null; indexPrice: number | null;
   nextFundingTimestamp: number | null; exchange: string; updatedAt: number;
 };
+type PinePlot = { title?: string; data?: (number | null)[] };
+type AIMessage = { id: number; role: "user" | "assistant"; content: string };
 
 const SAMPLE_PINE = `//@version=5
 indicator("Fast / Slow EMA", overlay=true)
@@ -81,6 +83,15 @@ export function TradingWorkspace() {
   const [showAlertForm, setShowAlertForm] = useState(false);
   const [alertDirection, setAlertDirection] = useState<"above" | "below">("above");
   const [alertPrice, setAlertPrice] = useState("");
+  const [pinePlots, setPinePlots] = useState<PinePlot[]>([]);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiEndpoint, setAiEndpoint] = useState("");
+  const [aiModel, setAiModel] = useState("");
+  const [aiKey, setAiKey] = useState("");
+  const [aiQuestion, setAiQuestion] = useState("Analyze the current market structure and identify the most important risk signals.");
+  const [aiMessages, setAiMessages] = useState<AIMessage[]>([]);
+  const [aiRunning, setAiRunning] = useState(false);
+  const [aiError, setAiError] = useState("");
 
   const last = candles.at(-1);
   const first = candles.at(0);
@@ -175,7 +186,8 @@ export function TradingWorkspace() {
         analysisGlobals.mark_price = derivatives?.markPrice ?? null;
         analysisGlobals.index_price = derivatives?.indexPrice ?? null;
         const runtime = generatedScript.run(data);
-        const plots = Object.values(runtime.plots || {}) as { title?: string; data?: (number | null)[] }[];
+        const plots = Object.values(runtime.plots || {}) as PinePlot[];
+        setPinePlots(plots);
         const seriesData = (values: (number | null)[]) => values.map((value, i) => value == null ? null : { time: candles[i].time, value }).filter(Boolean) as LineData<Time>[];
         if (plots[0]?.data) fastSeriesRef.current?.setData(seriesData(plots[0].data));
         if (plots[1]?.data) slowSeriesRef.current?.setData(seriesData(plots[1].data));
@@ -192,12 +204,43 @@ export function TradingWorkspace() {
     if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
   };
 
+  const analyzeMarket = async () => {
+    const question = aiQuestion.trim();
+    if (!question || !aiEndpoint.trim() || !aiModel.trim()) {
+      setAiError("Add a compatible endpoint and model ID, then enter a question.");
+      return;
+    }
+    setAiRunning(true); setAiError("");
+    setAiMessages((items) => [...items, { id: (items.at(-1)?.id ?? 0) + 1, role: "user", content: question }]);
+    try {
+      const ema9 = calculateEma(candles, 9);
+      const ema21 = calculateEma(candles, 21);
+      const context = {
+        capturedAt: new Date().toISOString(),
+        market: { symbol, venue: "bybit", contract: "USDT perpetual", timeframe: INTERVALS.find((item) => item.value === interval)?.label, lastPrice: last?.close ?? null },
+        candles: candles.slice(-120).map((candle) => ({ time: new Date(Number(candle.time) * 1000).toISOString(), open: candle.open, high: candle.high, low: candle.low, close: candle.close, volume: candle.volume ?? null })),
+        indicators: {
+          builtIn: { ema9: ema9.at(-1)?.value ?? null, ema21: ema21.at(-1)?.value ?? null, ema9Visible: showFast, ema21Visible: showSlow },
+          customPine: { source: pine, plots: pinePlots.map((plot, index) => ({ title: plot.title || `Plot ${index + 1}`, recentValues: plot.data?.slice(-30) ?? [] })) },
+        },
+        derivatives: derivatives ? { sourceExchange: exchange, openInterestUsd: derivatives.openInterestValue, openInterestBase: derivatives.openInterestAmount, fundingRate: derivatives.fundingRate, markPrice: derivatives.markPrice, indexPrice: derivatives.indexPrice, nextFundingTimestamp: derivatives.nextFundingTimestamp } : null,
+      };
+      const response = await fetch("/api/ai/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint: aiEndpoint, apiKey: aiKey, model: aiModel, question, context }) });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "AI analysis failed");
+      setAiMessages((items) => [...items, { id: (items.at(-1)?.id ?? 0) + 1, role: "assistant", content: payload.analysis }]);
+      setAiQuestion("");
+    } catch (error) {
+      setAiError(error instanceof Error ? error.message : "AI analysis failed");
+    } finally { setAiRunning(false); }
+  };
+
   return (
     <main className="studio-shell">
       <header className="topbar">
         <div className="brand"><span className="brand-mark">π</span><span>πlab</span><small>crypto workspace</small></div>
         <div className="market-switcher"><span className="coin-badge">₿</span><div className="market-copy"><strong>{symbol.replace("USDT", " / USDT")}</strong><span>Perpetual · Bybit</span></div><span style={{ color: "var(--faint)" }}>⌄</span></div>
-        <div className="top-actions"><button className="ghost-button" onClick={() => setShowAlertForm(true)}>＋ Alert</button><button className="primary-button" onClick={runPine}>Run Pine</button></div>
+        <div className="top-actions"><button className="ghost-button" onClick={() => setShowAlertForm(true)}>＋ Alert</button><button className="ai-button" onClick={() => setAiOpen(true)}><span>✦</span> AI Analyst <em>LAB</em></button><button className="primary-button" onClick={runPine}>Run Pine</button></div>
       </header>
 
       <section className="workspace">
@@ -262,7 +305,37 @@ export function TradingWorkspace() {
           </section>
         </aside>
       </section>
-      <footer className="footer"><div className="status-group"><span className="tiny-dot" /><span>Bybit public feed</span><span>CCXT normalized</span><span>Pine v5 subset</span></div><span>UTC · Data for analysis only</span></footer>
+      {aiOpen && <button className="ai-backdrop" aria-label="Close AI Analyst" onClick={() => setAiOpen(false)} />}
+      <aside className={`ai-drawer ${aiOpen ? "open" : ""}`} aria-hidden={!aiOpen} aria-label="πlab AI Analyst">
+        <div className="ai-header">
+          <div><span className="ai-orb">✦</span><strong>πlab AI Analyst</strong><small>Experimental · current chart context</small></div>
+          <button aria-label="Close AI Analyst" onClick={() => setAiOpen(false)}>×</button>
+        </div>
+        <div className="ai-context-strip">
+          <span>{symbol}</span><span>{INTERVALS.find((item) => item.value === interval)?.label}</span><span>{candles.length} candles</span><span>{pinePlots.length || 2} indicators</span>
+        </div>
+        <section className="ai-connection">
+          <div className="ai-section-title"><span>Model connection</span><code>OpenAI-compatible</code></div>
+          <label>Endpoint<input type="url" placeholder="https://your-host/v1/chat/completions" value={aiEndpoint} onChange={(event) => setAiEndpoint(event.target.value)} /></label>
+          <div className="ai-field-row">
+            <label>Model ID<input placeholder="your-model-id" value={aiModel} onChange={(event) => setAiModel(event.target.value)} /></label>
+            <label>API key<input type="password" autoComplete="off" placeholder="Session only" value={aiKey} onChange={(event) => setAiKey(event.target.value)} /></label>
+          </div>
+          <p>The key stays in this browser session and is sent only when you analyze.</p>
+        </section>
+        <div className="ai-messages" aria-live="polite">
+          {aiMessages.length === 0 && <div className="ai-empty"><span>✦</span><strong>Chart context is ready</strong><p>The model receives 120 recent OHLCV candles, EMA outputs, custom Pine plots, open interest, funding, mark price, and index price.</p></div>}
+          {aiMessages.map((message) => <article key={message.id} className={`ai-message ${message.role}`}><small>{message.role === "assistant" ? "πlab AI" : "You"}</small><div>{message.content}</div></article>)}
+          {aiRunning && <article className="ai-message assistant thinking"><small>πlab AI</small><div><i /><i /><i /> Analyzing chart context…</div></article>}
+        </div>
+        <div className="ai-composer">
+          <div className="ai-quick-prompts"><button onClick={() => setAiQuestion("What is the current trend, momentum, and likely invalidation level?")}>Trend</button><button onClick={() => setAiQuestion("Do funding and open interest confirm or contradict the price move?")}>OI + funding</button><button onClick={() => setAiQuestion("Explain the current Pine indicator outputs and any conflicts between them.")}>Indicators</button></div>
+          <textarea aria-label="Ask AI about the current chart" placeholder="Ask about this chart…" value={aiQuestion} onChange={(event) => setAiQuestion(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") analyzeMarket(); }} />
+          {aiError && <div className="ai-error">{aiError}</div>}
+          <div className="ai-send-row"><span>⌘ Enter to send · analysis only</span><button onClick={analyzeMarket} disabled={aiRunning}>{aiRunning ? "Analyzing…" : "Analyze current chart"}</button></div>
+        </div>
+      </aside>
+      <footer className="footer"><div className="status-group"><span className="tiny-dot" /><span>Bybit public feed</span><span>CCXT normalized</span><span>Pine v5 subset</span><span>AI context ready</span></div><span>UTC · Data for analysis only</span></footer>
     </main>
   );
 }

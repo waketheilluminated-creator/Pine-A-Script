@@ -23,7 +23,19 @@ test("server-renders the πlab trading workspace", async () => {
   assert.match(html, /Derivatives pulse/);
   assert.match(html, /Pine Editor/);
   assert.match(html, /Create alert/);
+  assert.match(html, /AI Analyst/);
   assert.doesNotMatch(html, /Your site is taking shape|react-loading-skeleton/);
+});
+
+test("AI route validates model connection details before forwarding data", async () => {
+  const app = await worker();
+  const response = await app.fetch(new Request("http://localhost/api/ai/analyze", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ endpoint: "http://localhost:11434/v1/chat/completions", model: "test", question: "Analyze" }),
+  }), env, context);
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: "Only public HTTPS model endpoints are allowed" });
 });
 
 test("derivatives API rejects unsupported exchanges", async () => {

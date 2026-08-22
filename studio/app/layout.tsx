@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "πlab",
-  description: "A focused crypto charting and Pine indicator workspace.",
+  description: "A focused crypto charting, Pine indicator, and experimental AI analysis workspace.",
 };
 
 export default function RootLayout({

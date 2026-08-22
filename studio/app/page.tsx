@@ -3,7 +3,7 @@ import { TradingWorkspace } from "./trading-workspace";
 
 export const metadata: Metadata = {
   title: "πlab — Live crypto charting",
-  description: "Live perpetual charts, Pine indicators, derivatives data, and alerts.",
+  description: "Live perpetual charts, Pine indicators, derivatives data, alerts, and experimental AI analysis.",
 };
 
 export default function Home() {
