@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Pine Studio",
+  title: "πlab",
   description: "A focused crypto charting and Pine indicator workspace.",
 };
 

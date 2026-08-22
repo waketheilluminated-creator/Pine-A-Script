@@ -195,7 +195,7 @@ export function TradingWorkspace() {
   return (
     <main className="studio-shell">
       <header className="topbar">
-        <div className="brand"><span className="brand-mark">P/</span><span>Pine Studio</span><small>crypto workspace</small></div>
+        <div className="brand"><span className="brand-mark">π</span><span>πlab</span><small>crypto workspace</small></div>
         <div className="market-switcher"><span className="coin-badge">₿</span><div className="market-copy"><strong>{symbol.replace("USDT", " / USDT")}</strong><span>Perpetual · Bybit</span></div><span style={{ color: "var(--faint)" }}>⌄</span></div>
         <div className="top-actions"><button className="ghost-button" onClick={() => setShowAlertForm(true)}>＋ Alert</button><button className="primary-button" onClick={runPine}>Run Pine</button></div>
       </header>
