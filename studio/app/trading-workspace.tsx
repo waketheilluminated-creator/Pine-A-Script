@@ -6,6 +6,7 @@ import {
   type CandlestickData, type IChartApi, type ISeriesApi,
   type LineData, type Time, type UTCTimestamp,
 } from "lightweight-charts";
+import { FALLBACK_MARKETS, nextRecentSymbols, normalizeBybitMarkets, searchMarkets } from "@/lib/market-symbols.js";
 import { savePineSource, usePineSource } from "./pine-source";
 
 type Candle = CandlestickData<Time> & { volume?: number };
@@ -17,13 +18,12 @@ type Derivatives = {
 };
 type PinePlot = { title?: string; data?: (number | null)[] };
 type AIMessage = { id: number; role: "user" | "assistant"; content: string };
+type MarketOption = { symbol: string; base: string; quote: string };
 
 const INTERVALS: { label: string; value: Interval }[] = [
   { label: "1m", value: "1" }, { label: "5m", value: "5" }, { label: "15m", value: "15" },
   { label: "1H", value: "60" }, { label: "4H", value: "240" }, { label: "1D", value: "D" },
 ];
-const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"];
-
 function formatPrice(value: number | null) {
   if (value == null || !Number.isFinite(value)) return "—";
   return value >= 1000
@@ -50,11 +50,24 @@ function calculateEma(candles: Candle[], length: number): LineData<Time>[] {
 export function TradingWorkspace() {
   const chartHost = useRef<HTMLDivElement>(null);
   const editorBodyRef = useRef<HTMLDivElement>(null);
+  const symbolSearchRef = useRef<HTMLInputElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const fastSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const slowSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const [symbol, setSymbol] = useState("BTCUSDT");
+  const [marketCatalog, setMarketCatalog] = useState<MarketOption[]>(FALLBACK_MARKETS);
+  const [symbolSearchOpen, setSymbolSearchOpen] = useState(false);
+  const [symbolQuery, setSymbolQuery] = useState("");
+  const [symbolTab, setSymbolTab] = useState<"all" | "perpetual">("all");
+  const [activeSymbolIndex, setActiveSymbolIndex] = useState(0);
+  const [recentSymbols, setRecentSymbols] = useState<string[]>(() => {
+    if (typeof window === "undefined") return ["BTCUSDT", "ETHUSDT"];
+    try {
+      const stored = JSON.parse(window.localStorage.getItem("pilab-recent-symbols") || "[]");
+      return Array.isArray(stored) && stored.every((item) => typeof item === "string") ? stored : ["BTCUSDT", "ETHUSDT"];
+    } catch { return ["BTCUSDT", "ETHUSDT"]; }
+  });
   const [interval, setInterval] = useState<Interval>("15");
   const [candles, setCandles] = useState<Candle[]>([]);
   const [connected, setConnected] = useState(false);
@@ -90,11 +103,44 @@ export function TradingWorkspace() {
   const first = candles.at(0);
   const change = last && first ? ((last.close - first.open) / first.open) * 100 : 0;
   const lineCount = useMemo(() => pine.split("\n").map((_, i) => i + 1).join("\n"), [pine]);
+  const symbolResults = useMemo(() => searchMarkets(marketCatalog, symbolQuery).slice(0, 100) as MarketOption[], [marketCatalog, symbolQuery]);
+  const recentMarkets = useMemo(() => recentSymbols.map((recent) => marketCatalog.find((market) => market.symbol === recent)).filter(Boolean) as MarketOption[], [marketCatalog, recentSymbols]);
 
   const openPineEditorTab = () => {
     savePineSource(pine);
     window.open("/pine-editor", "_blank", "noopener,noreferrer");
   };
+
+  const selectMarket = (market: MarketOption) => {
+    setLoading(true);
+    setSymbol(market.symbol);
+    setSymbolSearchOpen(false);
+    setSymbolQuery("");
+    setActiveSymbolIndex(0);
+    setRecentSymbols((current) => {
+      const next = nextRecentSymbols(current, market.symbol);
+      window.localStorage.setItem("pilab-recent-symbols", JSON.stringify(next));
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    let active = true;
+    fetch("https://api.bybit.com/v5/market/instruments-info?category=linear&limit=1000")
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("Symbol catalog unavailable")))
+      .then((payload) => {
+        const markets = normalizeBybitMarkets(payload) as MarketOption[];
+        if (active && markets.length) setMarketCatalog(markets);
+      })
+      .catch(() => { /* The fallback catalog remains usable offline. */ });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!symbolSearchOpen) return;
+    const timer = window.setTimeout(() => symbolSearchRef.current?.focus(), 0);
+    return () => clearTimeout(timer);
+  }, [symbolSearchOpen]);
 
   useEffect(() => {
     if (!chartHost.current) return;
@@ -206,10 +252,18 @@ export function TradingWorkspace() {
         event.preventDefault();
         setShowAlertForm(true);
       }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setSymbolSearchOpen(true);
+      }
+      if (event.key === "Escape" && symbolSearchOpen) {
+        event.preventDefault();
+        setSymbolSearchOpen(false);
+      }
     };
     window.addEventListener("keydown", handleWorkspaceShortcut);
     return () => window.removeEventListener("keydown", handleWorkspaceShortcut);
-  }, [runPine]);
+  }, [runPine, symbolSearchOpen]);
 
   const createAlert = () => {
     const price = Number(alertPrice); if (!Number.isFinite(price)) return;
@@ -280,7 +334,7 @@ export function TradingWorkspace() {
     <main className="studio-shell">
       <header className="topbar">
         <div className="brand"><span className="brand-mark">π</span><span>πlab</span><small>crypto workspace</small></div>
-        <div className="market-switcher"><span className="coin-badge">₿</span><div className="market-copy"><strong>{symbol.replace("USDT", " / USDT")}</strong><span>Perpetual · Bybit</span></div><span style={{ color: "var(--faint)" }}>⌄</span></div>
+        <button className="market-switcher" aria-label="Search symbols (Cmd/Ctrl+K)" title="Search symbols (Cmd/Ctrl+K)" onClick={() => setSymbolSearchOpen(true)}><span className="coin-badge">{symbol === "BTCUSDT" ? "₿" : symbol.slice(0, 1)}</span><span className="market-copy"><strong>{symbol.replace("USDT", " / USDT")}</strong><span>Perpetual · Bybit</span></span><span className="market-chevron">⌄</span></button>
         <div className="top-actions"><button className="ai-button" onClick={() => setAiOpen(true)}><span>✦</span> AI Analyst <em>LAB</em></button></div>
       </header>
 
@@ -293,9 +347,7 @@ export function TradingWorkspace() {
         <section className="main-area" style={{ gridTemplateRows: `45px minmax(220px, 1fr) ${panelCollapsed ? 0 : panelHeight}px` }}>
           <div className="chart-toolbar">
             <div className="toolbar-cluster">
-              <select aria-label="Market" value={symbol} onChange={(e) => { setLoading(true); setSymbol(e.target.value); }} className="time-button" style={{ background: "transparent", border: 0 }}>
-                {SYMBOLS.map((item) => <option key={item} value={item}>{item.replace("USDT", " / USDT")}</option>)}
-              </select><span className="toolbar-separator" />
+              <button className="toolbar-symbol-button" aria-label="Search symbols (Cmd/Ctrl+K)" title="Search symbols (Cmd/Ctrl+K)" onClick={() => setSymbolSearchOpen(true)}><strong>{symbol.replace("USDT", " / USDT")}</strong><span>⌄</span></button><span className="toolbar-separator" />
               {INTERVALS.map((item) => <button key={item.value} onClick={() => { setLoading(true); setInterval(item.value); }} className={`time-button ${interval === item.value ? "active" : ""}`}>{item.label}</button>)}
             </div>
             <div className="toolbar-cluster"><button className="chart-alert-button" aria-label="Create alert (Alt+A)" title="Create alert (Alt+A)" onClick={() => setShowAlertForm(true)}><span aria-hidden="true">◷</span> Alert</button><span className="toolbar-separator" /><span className={`live-dot ${connected ? "online" : ""}`} /><span className="live-copy">{connected ? "Live" : "Connecting"}</span><span className="toolbar-separator" /><button className="time-button" onClick={() => chartRef.current?.timeScale().fitContent()}>Fit</button></div>
@@ -351,6 +403,26 @@ export function TradingWorkspace() {
           </section>
         </aside>
       </section>
+      {symbolSearchOpen && <>
+        <button className="symbol-search-backdrop" aria-label="Close symbol search" onClick={() => setSymbolSearchOpen(false)} />
+        <section className="symbol-search-dialog" role="dialog" aria-modal="true" aria-labelledby="symbol-search-title">
+          <header className="symbol-search-header"><div><h2 id="symbol-search-title">Symbol Search</h2><span>Bybit markets</span></div><button aria-label="Close symbol search" onClick={() => setSymbolSearchOpen(false)}>×</button></header>
+          <div className="symbol-search-input-wrap"><span aria-hidden="true">⌕</span><input ref={symbolSearchRef} aria-label="Search Bybit perpetual symbols" placeholder="Search symbol, e.g. BTCUSDT" value={symbolQuery} onChange={(event) => { setSymbolQuery(event.target.value.toUpperCase()); setActiveSymbolIndex(0); }} onKeyDown={(event) => {
+            if (event.key === "ArrowDown") { event.preventDefault(); setActiveSymbolIndex((index) => Math.min(symbolResults.length - 1, index + 1)); }
+            if (event.key === "ArrowUp") { event.preventDefault(); setActiveSymbolIndex((index) => Math.max(0, index - 1)); }
+            if (event.key === "Enter" && symbolResults[activeSymbolIndex]) { event.preventDefault(); selectMarket(symbolResults[activeSymbolIndex]); }
+            if (event.key === "Escape") { event.preventDefault(); setSymbolSearchOpen(false); }
+          }} /><kbd>⌘ K</kbd></div>
+          <div className="symbol-search-filters"><div className="symbol-tabs"><button className={symbolTab === "all" ? "active" : ""} onClick={() => setSymbolTab("all")}>All</button><button className={symbolTab === "perpetual" ? "active" : ""} onClick={() => setSymbolTab("perpetual")}>Perpetual</button></div><div className="symbol-filter-pills"><span>Crypto</span><span>BYBIT</span></div></div>
+          {symbolTab === "all" && !symbolQuery && recentMarkets.length > 0 && <div className="recent-symbols"><span>Recent</span><div>{recentMarkets.map((market) => <button key={market.symbol} onClick={() => selectMarket(market)}>{market.base}<small>/USDT</small></button>)}</div></div>}
+          <div className="symbol-results-head"><span>Symbol</span><span>{symbolResults.length} markets</span></div>
+          <div className="symbol-results" role="listbox" aria-label="Bybit perpetual symbols">
+            {symbolResults.map((market, index) => <button key={market.symbol} role="option" aria-selected={index === activeSymbolIndex} className={`symbol-result ${index === activeSymbolIndex ? "active" : ""}`} onMouseEnter={() => setActiveSymbolIndex(index)} onClick={() => selectMarket(market)}><span className="symbol-avatar">{market.symbol === "BTCUSDT" ? "₿" : market.base.slice(0, 2)}</span><span className="symbol-result-copy"><strong>{market.symbol}</strong><small>{market.base} / TetherUS Perpetual</small></span><span className="symbol-kind">PERP</span><span className="symbol-exchange">BYBIT</span></button>)}
+            {symbolResults.length === 0 && <div className="symbol-empty"><strong>No symbols found</strong><span>Try another ticker or coin name.</span></div>}
+          </div>
+          <footer className="symbol-search-footer"><span><kbd>↑</kbd><kbd>↓</kbd> Navigate</span><span><kbd>Enter</kbd> Select</span><span><kbd>Esc</kbd> Close</span></footer>
+        </section>
+      </>}
       {aiOpen && <button className="ai-backdrop" aria-label="Close AI Analyst" onClick={() => setAiOpen(false)} />}
       <aside className={`ai-drawer ${aiOpen ? "open" : ""}`} aria-hidden={!aiOpen} aria-label="πlab AI Analyst">
         <div className="ai-header">
