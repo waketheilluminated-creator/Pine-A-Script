@@ -23,6 +23,11 @@ test("server-renders the πlab trading workspace", async () => {
   assert.match(html, /Derivatives pulse/);
   assert.match(html, /Pine Editor/);
   assert.match(html, /Open Pine editor in new tab/);
+  assert.match(html, /Collapse bottom panel/);
+  assert.match(html, /Remove EMA 9 indicator/);
+  assert.match(html, /Remove EMA 21 indicator/);
+  assert.match(html, /Add to chart/);
+  assert.match(html, /Create alert \(Alt\+A\)/);
   assert.match(html, /Resize Pine editor panel/);
   assert.match(html, /Resize compiler console/);
   assert.match(html, /Create alert/);

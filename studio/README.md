@@ -8,6 +8,7 @@ A focused TradingView-style crypto analysis workspace built on the Pine-A-Script
 - 1m through 1D timeframes with EMA overlays
 - Editable Pine Script v5 subset compiled and executed in the browser
 - Drag-resizable Pine editor height and editor/console split
+- TradingView-style collapsible Pine panel, chart script actions, alerts, and removable indicator legends
 - Separate full-tab Pine editor with automatic cross-tab source synchronization
 - Price alerts with in-app state and browser notifications
 - CCXT-normalized derivatives data from Bybit, Binance, and OKX

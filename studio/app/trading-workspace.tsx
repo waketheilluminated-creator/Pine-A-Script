@@ -82,7 +82,9 @@ export function TradingWorkspace() {
   const [aiRunning, setAiRunning] = useState(false);
   const [aiError, setAiError] = useState("");
   const [panelHeight, setPanelHeight] = useState(245);
+  const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [consoleWidth, setConsoleWidth] = useState(260);
+  const [pineApplied, setPineApplied] = useState(false);
 
   const last = candles.at(-1);
   const first = candles.at(0);
@@ -187,11 +189,27 @@ export function TradingWorkspace() {
         const seriesData = (values: (number | null)[]) => values.map((value, i) => value == null ? null : { time: candles[i].time, value }).filter(Boolean) as LineData<Time>[];
         if (plots[0]?.data) fastSeriesRef.current?.setData(seriesData(plots[0].data));
         if (plots[1]?.data) slowSeriesRef.current?.setData(seriesData(plots[1].data));
+        setPineApplied(true);
         setConsoleKind("success"); setConsoleText(`Compiled successfully · ${candles.length} bars · ${plots.length} plot${plots.length === 1 ? "" : "s"} · ${runtime.alerts?.length || 0} alert events`);
       } finally { URL.revokeObjectURL(moduleUrl); }
     } catch (error) { setConsoleKind("error"); setConsoleText(error instanceof Error ? error.message : "Pine execution failed"); }
     finally { setRunning(false); }
   }, [pine, candles, derivatives]);
+
+  useEffect(() => {
+    const handleWorkspaceShortcut = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        event.preventDefault();
+        runPine();
+      }
+      if (event.altKey && event.key.toLowerCase() === "a") {
+        event.preventDefault();
+        setShowAlertForm(true);
+      }
+    };
+    window.addEventListener("keydown", handleWorkspaceShortcut);
+    return () => window.removeEventListener("keydown", handleWorkspaceShortcut);
+  }, [runPine]);
 
   const createAlert = () => {
     const price = Number(alertPrice); if (!Number.isFinite(price)) return;
@@ -263,7 +281,7 @@ export function TradingWorkspace() {
       <header className="topbar">
         <div className="brand"><span className="brand-mark">π</span><span>πlab</span><small>crypto workspace</small></div>
         <div className="market-switcher"><span className="coin-badge">₿</span><div className="market-copy"><strong>{symbol.replace("USDT", " / USDT")}</strong><span>Perpetual · Bybit</span></div><span style={{ color: "var(--faint)" }}>⌄</span></div>
-        <div className="top-actions"><button className="ghost-button" onClick={() => setShowAlertForm(true)}>＋ Alert</button><button className="ai-button" onClick={() => setAiOpen(true)}><span>✦</span> AI Analyst <em>LAB</em></button><button className="primary-button" onClick={runPine}>Run Pine</button></div>
+        <div className="top-actions"><button className="ai-button" onClick={() => setAiOpen(true)}><span>✦</span> AI Analyst <em>LAB</em></button></div>
       </header>
 
       <section className="workspace">
@@ -272,7 +290,7 @@ export function TradingWorkspace() {
           <span className="rail-spacer" /><button className="tool-button" title="Settings">⚙</button>
         </nav>
 
-        <section className="main-area" style={{ gridTemplateRows: `45px minmax(220px, 1fr) ${panelHeight}px` }}>
+        <section className="main-area" style={{ gridTemplateRows: `45px minmax(220px, 1fr) ${panelCollapsed ? 0 : panelHeight}px` }}>
           <div className="chart-toolbar">
             <div className="toolbar-cluster">
               <select aria-label="Market" value={symbol} onChange={(e) => { setLoading(true); setSymbol(e.target.value); }} className="time-button" style={{ background: "transparent", border: 0 }}>
@@ -280,31 +298,32 @@ export function TradingWorkspace() {
               </select><span className="toolbar-separator" />
               {INTERVALS.map((item) => <button key={item.value} onClick={() => { setLoading(true); setInterval(item.value); }} className={`time-button ${interval === item.value ? "active" : ""}`}>{item.label}</button>)}
             </div>
-            <div className="toolbar-cluster"><span className={`live-dot ${connected ? "online" : ""}`} /><span className="live-copy">{connected ? "Live" : "Connecting"}</span><span className="toolbar-separator" /><button className="time-button" onClick={() => chartRef.current?.timeScale().fitContent()}>Fit</button></div>
+            <div className="toolbar-cluster"><button className="chart-alert-button" aria-label="Create alert (Alt+A)" title="Create alert (Alt+A)" onClick={() => setShowAlertForm(true)}><span aria-hidden="true">◷</span> Alert</button><span className="toolbar-separator" /><span className={`live-dot ${connected ? "online" : ""}`} /><span className="live-copy">{connected ? "Live" : "Connecting"}</span><span className="toolbar-separator" /><button className="time-button" onClick={() => chartRef.current?.timeScale().fitContent()}>Fit</button></div>
           </div>
 
           <div className="chart-stage">
             <div className="chart-legend">
               <div className="market-head"><h1>{symbol.replace("USDT", "/USDT")} Perpetual</h1><span className="exchange-pill">BYBIT</span></div>
               <div className="quote-line"><span className="price">{formatPrice(last?.close ?? null)}</span><span className={change >= 0 ? "positive" : "negative"}>{change >= 0 ? "+" : ""}{change.toFixed(2)}%</span><span>H {formatPrice(last?.high ?? null)}</span><span>L {formatPrice(last?.low ?? null)}</span></div>
-              {showFast && <div className="indicator-label"><i style={{ background: "var(--cyan)" }} />EMA 9</div>}
-              {showSlow && <div className="indicator-label"><i style={{ background: "var(--amber)" }} />EMA 21</div>}
+              {showFast && <div className="indicator-label"><span><i style={{ background: "var(--cyan)" }} />EMA 9</span><button className="indicator-remove" aria-label="Remove EMA 9 indicator" title="Remove indicator" onClick={() => setShowFast(false)}>×</button></div>}
+              {showSlow && <div className="indicator-label"><span><i style={{ background: "var(--amber)" }} />EMA 21</span><button className="indicator-remove" aria-label="Remove EMA 21 indicator" title="Remove indicator" onClick={() => setShowSlow(false)}>×</button></div>}
             </div>
             <div className="chart-canvas" ref={chartHost} />
             {loading && <div className="chart-loading">Loading market data…</div>}
+            {panelCollapsed && <button className="restore-panel-button" aria-label="Restore bottom panel" onClick={() => setPanelCollapsed(false)}>⌃ Pine Editor</button>}
           </div>
 
-          <section className="bottom-panel">
+          {!panelCollapsed && <section className="bottom-panel">
             {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex -- ARIA separators become interactive when focusable and expose aria-valuenow. */}
             <div className="panel-resize-handle" role="separator" aria-label="Resize Pine editor panel" aria-orientation="horizontal" aria-valuemin={150} aria-valuemax={700} aria-valuenow={Math.round(panelHeight)} tabIndex={0} onPointerDown={startPanelResize} onKeyDown={resizePanelWithKeyboard} onDoubleClick={() => setPanelHeight(245)}><span /></div>
-            <div className="panel-header"><div className="tabs"><button className={`tab-button ${activeTab === "pine" ? "active" : ""}`} onClick={() => setActiveTab("pine")}>Pine Editor</button><button className={`tab-button ${activeTab === "console" ? "active" : ""}`} onClick={() => setActiveTab("console")}>Console</button></div><div className="editor-actions"><button className="popout-button" aria-label="Open Pine editor in new tab" title="Open Pine editor in new tab" onClick={openPineEditorTab}>↗ New tab</button><button className="run-button" onClick={runPine} disabled={running}>{running ? "Running…" : "▶ Run on chart"}</button></div></div>
+            <div className="panel-header"><div className="tabs"><button className={`tab-button ${activeTab === "pine" ? "active" : ""}`} onClick={() => setActiveTab("pine")}>Pine Editor</button><button className={`tab-button ${activeTab === "console" ? "active" : ""}`} onClick={() => setActiveTab("console")}>Console</button></div><div className="editor-actions"><button className="popout-button" aria-label="Open Pine editor in new tab" title="Open Pine editor in new tab" onClick={openPineEditorTab}>↗ New tab</button><button className="run-button" onClick={runPine} disabled={running} title="Add or update script on chart (Cmd/Ctrl+Enter)">{running ? "Applying…" : pineApplied ? "↻ Update on chart" : "▶ Add to chart"}</button><button className="panel-collapse-button" aria-label="Collapse bottom panel" title="Collapse bottom panel" onClick={() => setPanelCollapsed(true)}>⌄</button></div></div>
             <div className="editor-body" ref={editorBodyRef} style={{ gridTemplateColumns: `minmax(0, 1fr) 7px ${consoleWidth}px` }}>
               <div className="code-wrap"><pre className="line-numbers">{lineCount}</pre><textarea aria-label="Pine Script editor" className="code-editor" spellCheck={false} value={pine} onChange={(e) => savePineSource(e.target.value)} /></div>
               {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex -- ARIA separators become interactive when focusable and expose aria-valuenow. */}
               <div className="editor-splitter" role="separator" aria-label="Resize compiler console" aria-orientation="vertical" aria-valuemin={180} aria-valuemax={520} aria-valuenow={Math.round(consoleWidth)} tabIndex={0} onPointerDown={startConsoleResize} onKeyDown={resizeConsoleWithKeyboard} onDoubleClick={() => setConsoleWidth(260)}><span /></div>
               <aside className="console"><strong>Compiler output</strong><span className={consoleKind === "normal" ? "" : consoleKind}>{consoleText}</span></aside>
             </div>
-          </section>
+          </section>}
         </section>
 
         <aside className="right-panel">
