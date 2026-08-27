@@ -7,6 +7,7 @@ import {
   type LineData, type Time, type UTCTimestamp,
 } from "lightweight-charts";
 import { FALLBACK_MARKETS, nextRecentSymbols, normalizeBybitMarkets, searchMarkets } from "@/lib/market-symbols.js";
+import { COLLAPSED_PANEL_HEIGHT, DEFAULT_PANEL_HEIGHT, isPanelCollapsed, resolvePanelHeight, snapPanelHeight } from "@/lib/panel-layout.js";
 import { savePineSource, usePineSource } from "./pine-source";
 
 type Candle = CandlestickData<Time> & { volume?: number };
@@ -50,6 +51,7 @@ function calculateEma(candles: Candle[], length: number): LineData<Time>[] {
 export function TradingWorkspace() {
   const chartHost = useRef<HTMLDivElement>(null);
   const editorBodyRef = useRef<HTMLDivElement>(null);
+  const lastExpandedPanelHeightRef = useRef(DEFAULT_PANEL_HEIGHT);
   const symbolSearchRef = useRef<HTMLInputElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -94,9 +96,8 @@ export function TradingWorkspace() {
   const [aiMessages, setAiMessages] = useState<AIMessage[]>([]);
   const [aiRunning, setAiRunning] = useState(false);
   const [aiError, setAiError] = useState("");
-  const [panelHeight, setPanelHeight] = useState(245);
-  const [panelCollapsed, setPanelCollapsed] = useState(false);
-  const [consoleWidth, setConsoleWidth] = useState(260);
+  const [panelHeight, setPanelHeight] = useState(DEFAULT_PANEL_HEIGHT);
+  const [consoleHeight, setConsoleHeight] = useState(82);
   const [pineApplied, setPineApplied] = useState(false);
 
   const last = candles.at(-1);
@@ -105,6 +106,8 @@ export function TradingWorkspace() {
   const lineCount = useMemo(() => pine.split("\n").map((_, i) => i + 1).join("\n"), [pine]);
   const symbolResults = useMemo(() => searchMarkets(marketCatalog, symbolQuery).slice(0, 100) as MarketOption[], [marketCatalog, symbolQuery]);
   const recentMarkets = useMemo(() => recentSymbols.map((recent) => marketCatalog.find((market) => market.symbol === recent)).filter(Boolean) as MarketOption[], [marketCatalog, recentSymbols]);
+  const panelCollapsed = isPanelCollapsed(panelHeight);
+  const visibleConsoleHeight = Math.min(consoleHeight, Math.max(20, panelHeight - COLLAPSED_PANEL_HEIGHT - 43));
 
   const openPineEditorTab = () => {
     savePineSource(pine);
@@ -274,7 +277,11 @@ export function TradingWorkspace() {
 
   const startPanelResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
-    const move = (pointer: PointerEvent) => setPanelHeight(Math.max(150, Math.min(window.innerHeight * 0.65, window.innerHeight - 28 - pointer.clientY)));
+    const move = (pointer: PointerEvent) => {
+      const nextHeight = resolvePanelHeight(window.innerHeight, pointer.clientY);
+      if (!isPanelCollapsed(nextHeight)) lastExpandedPanelHeightRef.current = nextHeight;
+      setPanelHeight(nextHeight);
+    };
     const stop = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", stop); };
     window.addEventListener("pointermove", move); window.addEventListener("pointerup", stop);
   };
@@ -283,7 +290,7 @@ export function TradingWorkspace() {
     event.preventDefault();
     const move = (pointer: PointerEvent) => {
       const bounds = editorBodyRef.current?.getBoundingClientRect();
-      if (bounds) setConsoleWidth(Math.max(180, Math.min(bounds.width * 0.62, bounds.right - pointer.clientX)));
+      if (bounds) setConsoleHeight(Math.max(20, Math.min(bounds.height - 43, bounds.bottom - pointer.clientY)));
     };
     const stop = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", stop); };
     window.addEventListener("pointermove", move); window.addEventListener("pointerup", stop);
@@ -291,12 +298,21 @@ export function TradingWorkspace() {
 
   const resizePanelWithKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
-    event.preventDefault(); setPanelHeight((height) => Math.max(150, Math.min(window.innerHeight * 0.65, height + (event.key === "ArrowUp" ? 20 : -20))));
+    event.preventDefault();
+    if (panelCollapsed && event.key === "ArrowUp") {
+      setPanelHeight(lastExpandedPanelHeightRef.current);
+      return;
+    }
+    setPanelHeight((height) => {
+      const nextHeight = snapPanelHeight(height + (event.key === "ArrowUp" ? 20 : -20), window.innerHeight);
+      if (!isPanelCollapsed(nextHeight)) lastExpandedPanelHeightRef.current = nextHeight;
+      return nextHeight;
+    });
   };
 
   const resizeConsoleWithKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    event.preventDefault(); setConsoleWidth((width) => Math.max(180, Math.min(520, width + (event.key === "ArrowLeft" ? 20 : -20))));
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    event.preventDefault(); setConsoleHeight((height) => Math.max(20, Math.min(panelHeight - COLLAPSED_PANEL_HEIGHT - 43, height + (event.key === "ArrowUp" ? 16 : -16))));
   };
 
   const analyzeMarket = async () => {
@@ -344,7 +360,7 @@ export function TradingWorkspace() {
           <span className="rail-spacer" /><button className="tool-button" title="Settings">⚙</button>
         </nav>
 
-        <section className="main-area" style={{ gridTemplateRows: `45px minmax(220px, 1fr) ${panelCollapsed ? 0 : panelHeight}px` }}>
+        <section className="main-area" style={{ gridTemplateRows: `45px minmax(220px, 1fr) ${panelHeight}px` }}>
           <div className="chart-toolbar">
             <div className="toolbar-cluster">
               <button className="toolbar-symbol-button" aria-label="Search symbols (Cmd/Ctrl+K)" title="Search symbols (Cmd/Ctrl+K)" onClick={() => setSymbolSearchOpen(true)}><strong>{symbol.replace("USDT", " / USDT")}</strong><span>⌄</span></button><span className="toolbar-separator" />
@@ -362,20 +378,22 @@ export function TradingWorkspace() {
             </div>
             <div className="chart-canvas" ref={chartHost} />
             {loading && <div className="chart-loading">Loading market data…</div>}
-            {panelCollapsed && <button className="restore-panel-button" aria-label="Restore bottom panel" onClick={() => setPanelCollapsed(false)}>⌃ Pine Editor</button>}
           </div>
 
-          {!panelCollapsed && <section className="bottom-panel">
+          <section className={`bottom-panel ${panelCollapsed ? "collapsed" : ""}`}>
             {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex -- ARIA separators become interactive when focusable and expose aria-valuenow. */}
-            <div className="panel-resize-handle" role="separator" aria-label="Resize Pine editor panel" aria-orientation="horizontal" aria-valuemin={150} aria-valuemax={700} aria-valuenow={Math.round(panelHeight)} tabIndex={0} onPointerDown={startPanelResize} onKeyDown={resizePanelWithKeyboard} onDoubleClick={() => setPanelHeight(245)}><span /></div>
-            <div className="panel-header"><div className="tabs"><button className={`tab-button ${activeTab === "pine" ? "active" : ""}`} onClick={() => setActiveTab("pine")}>Pine Editor</button><button className={`tab-button ${activeTab === "console" ? "active" : ""}`} onClick={() => setActiveTab("console")}>Console</button></div><div className="editor-actions"><button className="popout-button" aria-label="Open Pine editor in new tab" title="Open Pine editor in new tab" onClick={openPineEditorTab}>↗ New tab</button><button className="run-button" onClick={runPine} disabled={running} title="Add or update script on chart (Cmd/Ctrl+Enter)">{running ? "Applying…" : pineApplied ? "↻ Update on chart" : "▶ Add to chart"}</button><button className="panel-collapse-button" aria-label="Collapse bottom panel" title="Collapse bottom panel" onClick={() => setPanelCollapsed(true)}>⌄</button></div></div>
-            <div className="editor-body" ref={editorBodyRef} style={{ gridTemplateColumns: `minmax(0, 1fr) 7px ${consoleWidth}px` }}>
+            <div className="panel-resize-handle" role="separator" aria-label="Resize Pine editor panel" aria-orientation="horizontal" aria-valuemin={COLLAPSED_PANEL_HEIGHT} aria-valuemax={700} aria-valuenow={Math.round(panelHeight)} tabIndex={0} onPointerDown={startPanelResize} onKeyDown={resizePanelWithKeyboard} onDoubleClick={() => {
+              if (panelCollapsed) setPanelHeight(lastExpandedPanelHeightRef.current);
+              else { lastExpandedPanelHeightRef.current = panelHeight; setPanelHeight(COLLAPSED_PANEL_HEIGHT); }
+            }}><span /></div>
+            <div className="panel-header"><div className="tabs"><button className={`tab-button ${activeTab === "pine" ? "active" : ""}`} onClick={() => { setActiveTab("pine"); if (panelCollapsed) setPanelHeight(lastExpandedPanelHeightRef.current); }}>Pine Editor</button><button className={`tab-button ${activeTab === "console" ? "active" : ""}`} onClick={() => { setActiveTab("console"); if (panelCollapsed) setPanelHeight(lastExpandedPanelHeightRef.current); }}>Console</button></div><div className="editor-actions">{panelCollapsed ? <button className="panel-collapse-button" aria-label="Expand bottom panel" title="Expand bottom panel" onClick={() => setPanelHeight(lastExpandedPanelHeightRef.current)}>⌃</button> : <><button className="popout-button" aria-label="Open Pine editor in new tab" title="Open Pine editor in new tab" onClick={openPineEditorTab}>↗ New tab</button><button className="run-button" onClick={runPine} disabled={running} title="Add or update script on chart (Cmd/Ctrl+Enter)">{running ? "Applying…" : pineApplied ? "↻ Update on chart" : "▶ Add to chart"}</button><button className="panel-collapse-button" aria-label="Collapse bottom panel" title="Collapse bottom panel" onClick={() => { lastExpandedPanelHeightRef.current = panelHeight; setPanelHeight(COLLAPSED_PANEL_HEIGHT); }}>⌄</button></>}</div></div>
+            {!panelCollapsed && <div className="editor-body" ref={editorBodyRef} style={{ gridTemplateRows: `minmax(36px, 1fr) 7px ${visibleConsoleHeight}px` }}>
               <div className="code-wrap"><pre className="line-numbers">{lineCount}</pre><textarea aria-label="Pine Script editor" className="code-editor" spellCheck={false} value={pine} onChange={(e) => savePineSource(e.target.value)} /></div>
               {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex -- ARIA separators become interactive when focusable and expose aria-valuenow. */}
-              <div className="editor-splitter" role="separator" aria-label="Resize compiler console" aria-orientation="vertical" aria-valuemin={180} aria-valuemax={520} aria-valuenow={Math.round(consoleWidth)} tabIndex={0} onPointerDown={startConsoleResize} onKeyDown={resizeConsoleWithKeyboard} onDoubleClick={() => setConsoleWidth(260)}><span /></div>
+              <div className="editor-splitter" role="separator" aria-label="Resize compiler console" aria-orientation="horizontal" aria-valuemin={20} aria-valuemax={Math.max(20, panelHeight - COLLAPSED_PANEL_HEIGHT - 43)} aria-valuenow={Math.round(visibleConsoleHeight)} tabIndex={0} onPointerDown={startConsoleResize} onKeyDown={resizeConsoleWithKeyboard} onDoubleClick={() => setConsoleHeight(82)}><span /></div>
               <aside className="console"><strong>Compiler output</strong><span className={consoleKind === "normal" ? "" : consoleKind}>{consoleText}</span></aside>
-            </div>
-          </section>}
+            </div>}
+          </section>
         </section>
 
         <aside className="right-panel">

@@ -30,7 +30,9 @@ test("server-renders the πlab trading workspace", async () => {
   assert.match(html, /Create alert \(Alt\+A\)/);
   assert.match(html, /Search symbols \(Cmd\/Ctrl\+K\)/);
   assert.match(html, /Resize Pine editor panel/);
+  assert.match(html, /aria-valuemin="37"/);
   assert.match(html, /Resize compiler console/);
+  assert.match(html, /aria-label="Resize compiler console"[^>]*aria-orientation="horizontal"/);
   assert.match(html, /Create alert/);
   assert.match(html, /AI Analyst/);
   assert.doesNotMatch(html, /Your site is taking shape|react-loading-skeleton/);
