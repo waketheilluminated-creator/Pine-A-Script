@@ -118,3 +118,53 @@ test("changing to Select cancels an active drawing before an empty chart click",
   assert.deepEqual(controller.getSession(), initialDrawingSession);
   assert.deepEqual(chartOptions.at(-1), { handleScroll: true, handleScale: true });
 });
+
+function createMutationController(initialDrawings = []) {
+  let drawings = initialDrawings;
+  const changes = [];
+  const controller = new DrawingController({
+    chart: {
+      applyOptions() {},
+      timeScale: () => ({ coordinateToTime: (x) => x }),
+    },
+    series: { coordinateToPrice: (y) => y },
+    getDrawings: () => drawings,
+    replaceDrawings(next, kind) {
+      drawings = next;
+      changes.push({ drawings: next, kind });
+    },
+    getTool: () => "select",
+    setTool() {},
+    requestRender() {},
+    requestText() {},
+    hitTest: () => null,
+    createId: () => "d-new",
+    now: () => 10,
+  });
+  return { changes, controller, getDrawings: () => drawings };
+}
+
+test("marks drag previews transient and commits the completed move once", () => {
+  const { changes, controller, getDrawings } = createMutationController([trend]);
+  controller.dispatch({ type: "START_DRAG", drawing: trend, part: "point-1", point: p2 });
+  controller.dispatch({ type: "DRAG", point: { time: 250, price: 25 }, now: 7 });
+
+  assert.equal(changes.length, 1);
+  assert.equal(changes[0].kind, "transient");
+
+  controller.dispatch({ type: "END_DRAG" });
+
+  assert.equal(changes.length, 2);
+  assert.equal(changes[1].kind, "commit");
+  assert.deepEqual(changes[1].drawings, getDrawings());
+});
+
+test("marks completed creates and deletes as commits", () => {
+  const created = createMutationController();
+  created.controller.dispatch({ type: "BEGIN", tool: "horizontal-line", point: p1, id: "d-new", now: 10 });
+  assert.equal(created.changes.at(-1)?.kind, "commit");
+
+  assert.equal(created.controller.deleteSelected(), true);
+  assert.equal(created.changes.at(-1)?.kind, "commit");
+  assert.deepEqual(created.getDrawings(), []);
+});

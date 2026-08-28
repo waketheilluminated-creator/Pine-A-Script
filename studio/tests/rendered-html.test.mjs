@@ -17,7 +17,10 @@ test("wires drawings into the chart workspace and market-scoped storage", async 
   const source = await readFile(new URL("../app/trading-workspace.tsx", import.meta.url), "utf8");
   assert.match(source, /candleSeries\.attachPrimitive\(drawingPrimitive\)/);
   assert.match(source, /loadDrawings\(window\.localStorage, exchange, symbol\)/);
-  assert.match(source, /saveDrawings\(window\.localStorage, exchange, symbol, drawings\)/);
+  assert.match(source, /new DrawingSaveScheduler\(window\.localStorage\)/);
+  assert.match(source, /kind === "commit"/);
+  assert.match(source, /drawingSaveSchedulerRef\.current\?\.flush\(\)/);
+  assert.match(source, /handleWorkspaceEscape\(\{/);
   assert.match(source, /drawing-text-input/);
 });
 

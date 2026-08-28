@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  drawingStorageKey, loadDrawings, parseDrawingCollection, saveDrawings,
+  DrawingSaveScheduler, drawingStorageKey, loadDrawings, parseDrawingCollection, saveDrawings,
 } from "../lib/drawings/store.ts";
 
 const trend = {
@@ -26,4 +26,31 @@ test("round-trips drawings and survives storage errors", () => {
   assert.equal(saveDrawings(storage, "bybit", "BTCUSDT", [trend]), true);
   assert.deepEqual(loadDrawings(storage, "bybit", "BTCUSDT"), [trend]);
   assert.equal(saveDrawings({ setItem() { throw new Error("quota"); } }, "bybit", "BTCUSDT", [trend]), false);
+});
+
+test("flushes a captured drawing snapshot under its original market identity", () => {
+  const values = new Map();
+  const storage = { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
+  let pending = null;
+  const timers = {
+    setTimeout(callback, delay) {
+      assert.equal(delay, 150);
+      pending = callback;
+      return 1;
+    },
+    clearTimeout(handle) {
+      assert.equal(handle, 1);
+      pending = null;
+    },
+  };
+  const scheduler = new DrawingSaveScheduler(storage, timers);
+  const committed = [trend];
+
+  scheduler.schedule("bybit", "BTCUSDT", committed);
+  committed.length = 0;
+  scheduler.flush();
+
+  assert.equal(pending, null);
+  assert.deepEqual(loadDrawings(storage, "bybit", "BTCUSDT"), [trend]);
+  assert.deepEqual(loadDrawings(storage, "binance", "BTCUSDT"), []);
 });

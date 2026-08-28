@@ -156,12 +156,13 @@ type ChartInteraction = {
 };
 
 type SeriesInteraction = { coordinateToPrice(y: number): number | null };
+export type DrawingChangeKind = "transient" | "commit";
 
 export type DrawingControllerOptions = {
   chart: ChartInteraction;
   series: SeriesInteraction;
   getDrawings(): readonly Drawing[];
-  replaceDrawings(drawings: Drawing[]): void;
+  replaceDrawings(drawings: Drawing[], kind: DrawingChangeKind): void;
   getTool(): DrawingTool;
   setTool(tool: DrawingTool): void;
   setSession?(session: DrawingSession): void;
@@ -241,7 +242,7 @@ export class DrawingController {
     if (this.session.phase !== "selected") return false;
     const drawings = this.options.getDrawings();
     if (!drawings.some((drawing) => drawing.id === this.session.selectedId)) return false;
-    this.options.replaceDrawings(drawings.filter((drawing) => drawing.id !== this.session.selectedId));
+    this.options.replaceDrawings(drawings.filter((drawing) => drawing.id !== this.session.selectedId), "commit");
     this.dispatch({ type: "CLEAR_SELECTION" });
     return true;
   }
@@ -338,13 +339,15 @@ export class DrawingController {
   };
 
   private dispatch(action: DrawingAction): void {
+    const completedDrag = action.type === "END_DRAG" && this.session.phase === "dragging" && this.session.updated !== undefined;
     this.session = reduceDrawingSession(this.session, action);
-    if (this.session.committed) this.options.replaceDrawings([...this.options.getDrawings(), this.session.committed]);
+    if (this.session.committed) this.options.replaceDrawings([...this.options.getDrawings(), this.session.committed], "commit");
     if (this.session.updated) {
       this.options.replaceDrawings(this.options.getDrawings().map((drawing) => (
         drawing.id === this.session.updated?.id ? this.session.updated : drawing
-      )));
+      )), "transient");
     }
+    if (completedDrag) this.options.replaceDrawings([...this.options.getDrawings()], "commit");
     this.options.setSession?.(this.session);
     this.options.requestRender();
   }
