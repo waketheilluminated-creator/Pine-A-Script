@@ -1,4 +1,5 @@
 import type { Drawing, DrawingPoint } from "./types.ts";
+import { toScreenPoint, type DrawingCoordinateAdapter } from "./coordinates.ts";
 
 export type ScreenPoint = { x: number; y: number };
 export type HitPart = "body" | "point-0" | "point-1";
@@ -7,8 +8,41 @@ export type ScreenDrawing = {
   id: string;
   type: Drawing["type"];
   points: readonly ScreenPoint[];
+  style?: Drawing["style"];
+  text?: string;
+  interactive?: boolean;
   textBounds?: { x: number; y: number; width: number; height: number };
 };
+
+export function buildScreenDrawings(
+  drawings: readonly Drawing[],
+  candleTimes: readonly number[],
+  api: DrawingCoordinateAdapter,
+): ScreenDrawing[] {
+  return drawings.flatMap((drawing) => {
+    const points = drawing.points.map((point) => toScreenPoint(point, candleTimes, api));
+    if (points.some((point) => point === null)) return [];
+
+    const screenDrawing: ScreenDrawing = {
+      id: drawing.id,
+      type: drawing.type,
+      points: points as ScreenPoint[],
+      style: drawing.style,
+      interactive: true,
+      ...(drawing.type === "text" ? { text: drawing.text } : {}),
+    };
+    if (drawing.type === "text") {
+      const anchor = screenDrawing.points[0];
+      screenDrawing.textBounds = {
+        x: anchor.x,
+        y: anchor.y - 12,
+        width: Math.max(24, drawing.text.length * 7 + 16),
+        height: 24,
+      };
+    }
+    return [screenDrawing];
+  });
+}
 
 export function distanceToSegment(point: ScreenPoint, start: ScreenPoint, end: ScreenPoint): number {
   const dx = end.x - start.x;
@@ -40,7 +74,7 @@ export function arrowHead(start: ScreenPoint, end: ScreenPoint, size: number): [
 }
 
 export function hitTestDrawing(drawing: ScreenDrawing, point: ScreenPoint, tolerance: number): DrawingHit | null {
-  for (let index = 0; index < Math.min(drawing.points.length, 2); index += 1) {
+  for (let index = 0; drawing.points.length >= 2 && index < 2; index += 1) {
     if (Math.hypot(point.x - drawing.points[index].x, point.y - drawing.points[index].y) <= tolerance) {
       return { drawingId: drawing.id, part: index === 0 ? "point-0" : "point-1" };
     }
