@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 async function worker() {
@@ -11,6 +12,14 @@ const env = {
   ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) },
 };
 const context = { waitUntil() {}, passThroughOnException() {} };
+
+test("wires drawings into the chart workspace and market-scoped storage", async () => {
+  const source = await readFile(new URL("../app/trading-workspace.tsx", import.meta.url), "utf8");
+  assert.match(source, /candleSeries\.attachPrimitive\(drawingPrimitive\)/);
+  assert.match(source, /loadDrawings\(window\.localStorage, exchange, symbol\)/);
+  assert.match(source, /saveDrawings\(window\.localStorage, exchange, symbol, drawings\)/);
+  assert.match(source, /drawing-text-input/);
+});
 
 test("server-renders the πlab trading workspace", async () => {
   const app = await worker();

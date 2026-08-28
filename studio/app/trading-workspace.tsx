@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent as ReactFormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import {
   CandlestickSeries, ColorType, createChart, LineSeries,
   type CandlestickData, type IChartApi, type ISeriesApi,
@@ -8,7 +8,10 @@ import {
 } from "lightweight-charts";
 import { FALLBACK_MARKETS, nextRecentSymbols, normalizeBybitMarkets, searchMarkets } from "@/lib/market-symbols.js";
 import { COLLAPSED_PANEL_HEIGHT, DEFAULT_PANEL_HEIGHT, isPanelCollapsed, resolvePanelHeight, snapPanelHeight } from "@/lib/panel-layout.js";
-import type { DrawingTool } from "@/lib/drawings/types.ts";
+import { DrawingController, initialDrawingSession, type DrawingSession } from "@/lib/drawings/controller.ts";
+import { DrawingPrimitive } from "@/lib/drawings/primitive.ts";
+import { loadDrawings, saveDrawings } from "@/lib/drawings/store.ts";
+import type { Drawing, DrawingPoint, DrawingTool } from "@/lib/drawings/types.ts";
 import { DrawingToolbar } from "@/components/drawing-toolbar";
 import { savePineSource, usePineSource } from "./pine-source";
 
@@ -50,6 +53,11 @@ function calculateEma(candles: Candle[], length: number): LineData<Time>[] {
   });
 }
 
+function isTextEditingElement(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.isContentEditable || target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT";
+}
+
 export function TradingWorkspace() {
   const chartHost = useRef<HTMLDivElement>(null);
   const editorBodyRef = useRef<HTMLDivElement>(null);
@@ -59,6 +67,11 @@ export function TradingWorkspace() {
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const fastSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const slowSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const drawingPrimitiveRef = useRef<DrawingPrimitive | null>(null);
+  const drawingControllerRef = useRef<DrawingController | null>(null);
+  const drawingsRef = useRef<Drawing[]>([]);
+  const candleTimesRef = useRef<number[]>([]);
+  const activeDrawingToolRef = useRef<DrawingTool>("select");
   const [symbol, setSymbol] = useState("BTCUSDT");
   const [marketCatalog, setMarketCatalog] = useState<MarketOption[]>(FALLBACK_MARKETS);
   const [symbolSearchOpen, setSymbolSearchOpen] = useState(false);
@@ -102,6 +115,17 @@ export function TradingWorkspace() {
   const [consoleHeight, setConsoleHeight] = useState(82);
   const [pineApplied, setPineApplied] = useState(false);
   const [activeDrawingTool, setActiveDrawingTool] = useState<DrawingTool>("select");
+  const [drawings, setDrawings] = useState<Drawing[]>([]);
+  const [drawingSession, setDrawingSession] = useState<DrawingSession>(initialDrawingSession);
+  const [textAnchor, setTextAnchor] = useState<DrawingPoint | null>(null);
+  const [textInputPosition, setTextInputPosition] = useState<{ x: number; y: number } | null>(null);
+  const [drawingText, setDrawingText] = useState("");
+  const [drawingMarket, setDrawingMarket] = useState({ exchange, symbol });
+
+  const selectDrawingTool = useCallback((tool: DrawingTool) => {
+    activeDrawingToolRef.current = tool;
+    setActiveDrawingTool(tool);
+  }, []);
 
   const last = candles.at(-1);
   const first = candles.at(0);
@@ -111,6 +135,9 @@ export function TradingWorkspace() {
   const recentMarkets = useMemo(() => recentSymbols.map((recent) => marketCatalog.find((market) => market.symbol === recent)).filter(Boolean) as MarketOption[], [marketCatalog, recentSymbols]);
   const panelCollapsed = isPanelCollapsed(panelHeight);
   const visibleConsoleHeight = Math.min(consoleHeight, Math.max(20, panelHeight - COLLAPSED_PANEL_HEIGHT - 43));
+  const drawingCursorClass = activeDrawingTool === "select"
+    ? "drawing-cursor-select"
+    : activeDrawingTool === "crosshair" ? "drawing-cursor-crosshair" : "drawing-cursor-placement";
 
   const openPineEditorTab = () => {
     savePineSource(pine);
@@ -160,17 +187,87 @@ export function TradingWorkspace() {
       handleScale: true, handleScroll: true,
     });
     const candleSeries = chart.addSeries(CandlestickSeries, { upColor: "#53c990", downColor: "#e76770", wickUpColor: "#53c990", wickDownColor: "#e76770", borderVisible: false });
+    const drawingPrimitive = new DrawingPrimitive();
+    candleSeries.attachPrimitive(drawingPrimitive);
+    const replaceDrawings = (next: Drawing[]) => {
+      drawingsRef.current = next;
+      setDrawings(next);
+    };
+    const drawingController = new DrawingController({
+      chart,
+      series: candleSeries,
+      getDrawings: () => drawingsRef.current,
+      replaceDrawings,
+      getTool: () => activeDrawingToolRef.current,
+      setTool: selectDrawingTool,
+      setSession: setDrawingSession,
+      requestRender: () => drawingPrimitive.setState(drawingsRef.current, drawingController.getSession(), candleTimesRef.current),
+      requestText: (point) => {
+        const x = chart.timeScale().timeToCoordinate(point.time);
+        const y = candleSeries.priceToCoordinate(point.price);
+        setTextAnchor(point);
+        setTextInputPosition(x == null || y == null ? null : { x, y });
+        setDrawingText("");
+      },
+      hitTest: (point) => drawingPrimitive.hitTestDrawing(point),
+    });
     const fastSeries = chart.addSeries(LineSeries, { color: "#62d6e8", lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
     const slowSeries = chart.addSeries(LineSeries, { color: "#f2c66d", lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
     chartRef.current = chart; candleSeriesRef.current = candleSeries; fastSeriesRef.current = fastSeries; slowSeriesRef.current = slowSeries;
-    return () => { chart.remove(); chartRef.current = null; };
-  }, []);
+    drawingPrimitiveRef.current = drawingPrimitive;
+    drawingControllerRef.current = drawingController;
+    drawingController.attach(chartHost.current);
+    drawingPrimitive.setState(drawingsRef.current, drawingController.getSession(), candleTimesRef.current);
+    return () => {
+      drawingController.detach();
+      candleSeries.detachPrimitive(drawingPrimitive);
+      if (drawingControllerRef.current === drawingController) drawingControllerRef.current = null;
+      if (drawingPrimitiveRef.current === drawingPrimitive) drawingPrimitiveRef.current = null;
+      chart.remove();
+      chartRef.current = null; candleSeriesRef.current = null; fastSeriesRef.current = null; slowSeriesRef.current = null;
+    };
+  }, [selectDrawingTool]);
 
   useEffect(() => {
     candleSeriesRef.current?.setData(candles);
     fastSeriesRef.current?.setData(showFast ? calculateEma(candles, 9) : []);
     slowSeriesRef.current?.setData(showSlow ? calculateEma(candles, 21) : []);
+    const candleTimes = candles.map((candle) => Number(candle.time)).filter(Number.isFinite).sort((a, b) => a - b);
+    candleTimesRef.current = candleTimes;
+    drawingControllerRef.current?.setCandleTimes(candleTimes);
+    drawingPrimitiveRef.current?.setState(
+      drawingsRef.current,
+      drawingControllerRef.current?.getSession() ?? initialDrawingSession,
+      candleTimes,
+    );
   }, [candles, showFast, showSlow]);
+
+  useEffect(() => {
+    drawingControllerRef.current?.cancel();
+    const loaded = loadDrawings(window.localStorage, exchange, symbol);
+    drawingsRef.current = loaded;
+    drawingPrimitiveRef.current?.setState(
+      loaded,
+      drawingControllerRef.current?.getSession() ?? initialDrawingSession,
+      candleTimesRef.current,
+    );
+    const timer = window.setTimeout(() => {
+      setTextAnchor(null);
+      setTextInputPosition(null);
+      setDrawingText("");
+      setDrawings(loaded);
+      setDrawingMarket({ exchange, symbol });
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [exchange, symbol]);
+
+  useEffect(() => {
+    if (drawingMarket.exchange !== exchange || drawingMarket.symbol !== symbol) return;
+    const timer = window.setTimeout(() => {
+      saveDrawings(window.localStorage, exchange, symbol, drawings);
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [drawingMarket, drawings, exchange, symbol]);
 
   useEffect(() => {
     let cancelled = false;
@@ -262,14 +359,31 @@ export function TradingWorkspace() {
         event.preventDefault();
         setSymbolSearchOpen(true);
       }
-      if (event.key === "Escape" && symbolSearchOpen) {
+      if (event.key === "Escape") {
         event.preventDefault();
-        setSymbolSearchOpen(false);
+        if (symbolSearchOpen) setSymbolSearchOpen(false);
+        drawingControllerRef.current?.cancel();
+        setTextAnchor(null);
+        setTextInputPosition(null);
+        setDrawingText("");
+      }
+      if (event.key === "Delete" || event.key === "Backspace") {
+        if (isTextEditingElement(event.target)) return;
+        if (drawingControllerRef.current?.deleteSelected()) event.preventDefault();
       }
     };
-    window.addEventListener("keydown", handleWorkspaceShortcut);
-    return () => window.removeEventListener("keydown", handleWorkspaceShortcut);
+    window.addEventListener("keydown", handleWorkspaceShortcut, true);
+    return () => window.removeEventListener("keydown", handleWorkspaceShortcut, true);
   }, [runPine, symbolSearchOpen]);
+
+  const commitDrawingText = (event: ReactFormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!drawingText.trim()) return;
+    if (!drawingControllerRef.current?.commitText(drawingText)) return;
+    setTextAnchor(null);
+    setTextInputPosition(null);
+    setDrawingText("");
+  };
 
   const createAlert = () => {
     const price = Number(alertPrice); if (!Number.isFinite(price)) return;
@@ -358,7 +472,7 @@ export function TradingWorkspace() {
       </header>
 
       <section className="workspace">
-        <DrawingToolbar activeTool={activeDrawingTool} onToolChange={setActiveDrawingTool} />
+        <DrawingToolbar activeTool={activeDrawingTool} onToolChange={selectDrawingTool} />
 
         <section className="main-area" style={{ gridTemplateRows: `45px minmax(220px, 1fr) ${panelHeight}px` }}>
           <div className="chart-toolbar">
@@ -369,7 +483,7 @@ export function TradingWorkspace() {
             <div className="toolbar-cluster"><button className="chart-alert-button" aria-label="Create alert (Alt+A)" title="Create alert (Alt+A)" onClick={() => setShowAlertForm(true)}><span aria-hidden="true">◷</span> Alert</button><span className="toolbar-separator" /><span className={`live-dot ${connected ? "online" : ""}`} /><span className="live-copy">{connected ? "Live" : "Connecting"}</span><span className="toolbar-separator" /><button className="time-button" onClick={() => chartRef.current?.timeScale().fitContent()}>Fit</button></div>
           </div>
 
-          <div className="chart-stage">
+          <div className={`chart-stage ${drawingCursorClass}`} data-drawing-phase={drawingSession.phase}>
             <div className="chart-legend">
               <div className="market-head"><h1>{symbol.replace("USDT", "/USDT")} Perpetual</h1><span className="exchange-pill">BYBIT</span></div>
               <div className="quote-line"><span className="price">{formatPrice(last?.close ?? null)}</span><span className={change >= 0 ? "positive" : "negative"}>{change >= 0 ? "+" : ""}{change.toFixed(2)}%</span><span>H {formatPrice(last?.high ?? null)}</span><span>L {formatPrice(last?.low ?? null)}</span></div>
@@ -377,6 +491,19 @@ export function TradingWorkspace() {
               {showSlow && <div className="indicator-label"><span><i style={{ background: "var(--amber)" }} />EMA 21</span><button className="indicator-remove" aria-label="Remove EMA 21 indicator" title="Remove indicator" onClick={() => setShowSlow(false)}>×</button></div>}
             </div>
             <div className="chart-canvas" ref={chartHost} />
+            {textAnchor && textInputPosition && <form className="drawing-text-input" style={{ left: textInputPosition.x, top: textInputPosition.y }} onSubmit={commitDrawingText}>
+              <label><span>Chart label</span>
+                {/* eslint-disable-next-line jsx-a11y/no-autofocus -- Text placement is a deliberate inline-edit action and should accept typing immediately. */}
+                <input autoFocus value={drawingText} onChange={(event) => setDrawingText(event.target.value)} onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  drawingControllerRef.current?.cancel();
+                  setTextAnchor(null);
+                  setTextInputPosition(null);
+                  setDrawingText("");
+                }
+              }} /></label>
+            </form>}
             {loading && <div className="chart-loading">Loading market data…</div>}
           </div>
 
