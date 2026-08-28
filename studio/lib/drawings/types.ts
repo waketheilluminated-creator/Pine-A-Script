@@ -1,6 +1,6 @@
 import type { UTCTimestamp } from "lightweight-charts";
 
-export type DrawingTool = "select" | "trend-line" | "horizontal-line" | "arrow" | "text" | "crosshair";
+export type DrawingTool = "select" | "trend-line" | "horizontal-line" | "arrow" | "text" | "price-change" | "crosshair";
 export type DrawingPoint = { time: UTCTimestamp; price: number };
 export type DrawingStyle = { color: string; lineWidth: 1 | 2 | 3 | 4 };
 export const DEFAULT_DRAWING_STYLE: DrawingStyle = { color: "#76e7a4", lineWidth: 2 };

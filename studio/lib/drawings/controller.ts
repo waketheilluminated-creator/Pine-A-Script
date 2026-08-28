@@ -17,6 +17,18 @@ export type PreviewingDrawingSession = {
   start: DrawingPoint;
   preview: DrawingPoint;
 } & SessionEffect;
+export type MeasuringDrawingSession = {
+  phase: "measuring";
+  tool: "price-change";
+  start: DrawingPoint;
+  preview: DrawingPoint;
+} & SessionEffect;
+export type MeasuredDrawingSession = {
+  phase: "measured";
+  tool: "price-change";
+  start: DrawingPoint;
+  end: DrawingPoint;
+} & SessionEffect;
 export type SelectedDrawingSession = { phase: "selected"; selectedId: string } & SessionEffect;
 export type DraggingDrawingSession = {
   phase: "dragging";
@@ -30,6 +42,8 @@ export type DrawingSession =
   | IdleDrawingSession
   | PlacingFirstDrawingSession
   | PreviewingDrawingSession
+  | MeasuringDrawingSession
+  | MeasuredDrawingSession
   | SelectedDrawingSession
   | DraggingDrawingSession;
 
@@ -38,6 +52,7 @@ export const initialDrawingSession: IdleDrawingSession = { phase: "idle" };
 export type DrawingAction =
   | { type: "BEGIN"; tool: DrawingTool; point: DrawingPoint; id?: string; now?: number }
   | { type: "PREVIEW"; point: DrawingPoint }
+  | { type: "MEASURE_END"; point: DrawingPoint }
   | { type: "COMMIT"; point: DrawingPoint; id: string; now: number }
   | { type: "TEXT_COMMIT"; text: string; id: string; now: number }
   | { type: "SELECT"; drawingId: string }
@@ -100,6 +115,9 @@ function dragDrawing(state: DraggingDrawingSession, point: DrawingPoint, now: nu
 export function reduceDrawingSession(state: DrawingSession, action: DrawingAction): DrawingSession {
   switch (action.type) {
     case "BEGIN":
+      if (action.tool === "price-change") {
+        return { phase: "measuring", tool: "price-change", start: action.point, preview: action.point };
+      }
       if (action.tool === "horizontal-line" && action.id && action.now !== undefined) {
         const committed = horizontalDrawing(action.point, action.id, action.now);
         return { phase: "selected", selectedId: committed.id, committed };
@@ -109,10 +127,16 @@ export function reduceDrawingSession(state: DrawingSession, action: DrawingActio
       }
       return state;
     case "PREVIEW":
+      if (state.phase === "measuring") {
+        return { ...state, preview: action.point };
+      }
       if (state.phase === "placing-first" && twoPointTool(state.tool)) {
         return { phase: "previewing", tool: state.tool, start: state.start, preview: action.point };
       }
       return state;
+    case "MEASURE_END":
+      if (state.phase !== "measuring") return state;
+      return { phase: "measured", tool: "price-change", start: state.start, end: action.point };
     case "COMMIT":
       if (state.phase === "previewing") {
         const committed = drawingFor(state.tool, state.start, action.point, action.id, action.now);
@@ -278,6 +302,14 @@ export class DrawingController {
     }
 
     event.preventDefault();
+    if (tool === "price-change") {
+      if (this.session.phase === "measured") this.dispatch({ type: "CANCEL" });
+      if (this.session.phase !== "idle") return;
+      this.dispatch({ type: "BEGIN", tool, point });
+      this.capturePointer(event.pointerId);
+      this.lockInteractions();
+      return;
+    }
     if (this.session.phase === "previewing") {
       this.dispatch({ type: "COMMIT", point, id: this.createId(), now: this.now() });
       this.unlockInteractions();
@@ -300,7 +332,7 @@ export class DrawingController {
     const tool = this.options.getTool();
     this.reconcileActiveTool(tool);
     if (tool === "crosshair") return;
-    if (this.session.phase !== "placing-first" && this.session.phase !== "previewing" && this.session.phase !== "dragging") return;
+    if (this.session.phase !== "placing-first" && this.session.phase !== "previewing" && this.session.phase !== "measuring" && this.session.phase !== "dragging") return;
     if (this.activePointerId !== null && event.pointerId !== this.activePointerId) return;
     const point = toDrawingPoint(this.toHostPoint(event), this.coordinateAdapter);
     if (point === null) {
@@ -314,6 +346,18 @@ export class DrawingController {
 
   private readonly onPointerUp = (event: PointerEvent): void => {
     this.reconcileActiveTool(this.options.getTool());
+    if (this.session.phase === "measuring" && event.pointerId === this.activePointerId) {
+      const point = toDrawingPoint(this.toHostPoint(event), this.coordinateAdapter);
+      if (point === null) {
+        this.cancel();
+        return;
+      }
+      event.preventDefault();
+      this.dispatch({ type: "MEASURE_END", point });
+      this.releasePointer();
+      this.unlockInteractions();
+      return;
+    }
     if (this.session.phase !== "dragging" || event.pointerId !== this.activePointerId) return;
     event.preventDefault();
     this.dispatch({ type: "END_DRAG" });
@@ -375,6 +419,7 @@ export class DrawingController {
   private reconcileActiveTool(tool: DrawingTool): void {
     const activeTool = this.session.phase === "placing-first" || this.session.phase === "previewing"
       ? this.session.tool
+      : this.session.phase === "measuring" || this.session.phase === "measured" ? "price-change"
       : this.session.phase === "dragging" ? "select" : null;
     if (activeTool === null || activeTool === tool) return;
     this.cancelInteraction(false);

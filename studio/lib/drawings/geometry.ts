@@ -14,6 +14,11 @@ export type ScreenDrawing = {
   textBounds?: { x: number; y: number; width: number; height: number };
 };
 
+export function priceChangeMetrics(startPrice: number, endPrice: number): { absolute: number; percent: number } {
+  const absolute = endPrice - startPrice;
+  return { absolute, percent: startPrice === 0 ? 0 : (absolute / startPrice) * 100 };
+}
+
 export function buildScreenDrawings(
   drawings: readonly Drawing[],
   candleTimes: readonly number[],

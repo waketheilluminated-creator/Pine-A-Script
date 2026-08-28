@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { arrowHead, buildScreenDrawings, distanceToSegment, hitTestDrawing, translateDrawing } from "../lib/drawings/geometry.ts";
+import * as drawingGeometry from "../lib/drawings/geometry.ts";
 import { DrawingPrimitive } from "../lib/drawings/primitive.ts";
 
 function attachPrimitive(primitive, requestUpdate = () => {}) {
@@ -22,6 +23,12 @@ function attachPrimitive(primitive, requestUpdate = () => {}) {
 test("measures segment distance and clamps beyond endpoints", () => {
   assert.equal(distanceToSegment({ x: 5, y: 3 }, { x: 0, y: 0 }, { x: 10, y: 0 }), 3);
   assert.equal(distanceToSegment({ x: -3, y: 4 }, { x: 0, y: 0 }, { x: 10, y: 0 }), 5);
+});
+
+test("calculates signed absolute and percentage price change", () => {
+  assert.equal(typeof drawingGeometry.priceChangeMetrics, "function");
+  assert.deepEqual(drawingGeometry.priceChangeMetrics(100, 112.5), { absolute: 12.5, percent: 12.5 });
+  assert.deepEqual(drawingGeometry.priceChangeMetrics(100, 80), { absolute: -20, percent: -20 });
 });
 
 test("prefers endpoint handles over a line body", () => {
@@ -145,4 +152,31 @@ test("renders arrows labels and selected handles in media coordinates", () => {
   assert.ok(calls.some(([method]) => method === "fillText"));
   assert.ok(calls.filter(([method]) => method === "arc").length >= 2);
   assert.ok(calls.filter(([method]) => method === "fill").length >= 2);
+});
+
+test("renders temporary price-change measurement values from its session", () => {
+  const primitive = new DrawingPrimitive();
+  attachPrimitive(primitive);
+  primitive.setState([], {
+    phase: "measured",
+    tool: "price-change",
+    start: { time: 100, price: 10 },
+    end: { time: 200, price: 20 },
+  }, [100, 200]);
+
+  const calls = [];
+  const context = new Proxy({}, {
+    get: (_target, property) => (...args) => { calls.push([property, ...args]); },
+    set: () => true,
+  });
+  primitive.paneViews()[0].renderer().draw({
+    useMediaCoordinateSpace(callback) {
+      callback({ context, mediaSize: { width: 400, height: 200 } });
+    },
+  });
+
+  const labels = calls.filter(([method]) => method === "fillText").map(([, label]) => label);
+  assert.ok(labels.some((label) => label.includes("+100.00%")));
+  assert.ok(labels.some((label) => label.includes("10.00 → 20.00")));
+  assert.ok(calls.some(([method]) => method === "fillRect"));
 });

@@ -19,6 +19,18 @@ test("creates a two-point preview then commits it", () => {
   assert.deepEqual(result.committed?.points, [p1, p2]);
 });
 
+test("keeps a completed price-change measurement temporary in session state", () => {
+  let state = reduceDrawingSession(initialDrawingSession, { type: "BEGIN", tool: "price-change", point: p1 });
+  assert.deepEqual(state, { phase: "measuring", tool: "price-change", start: p1, preview: p1 });
+
+  state = reduceDrawingSession(state, { type: "PREVIEW", point: p2 });
+  assert.deepEqual(state, { phase: "measuring", tool: "price-change", start: p1, preview: p2 });
+
+  state = reduceDrawingSession(state, { type: "MEASURE_END", point: p2 });
+  assert.deepEqual(state, { phase: "measured", tool: "price-change", start: p1, end: p2 });
+  assert.equal(state.committed, undefined);
+});
+
 test("commits horizontal line immediately and cancels transient state", () => {
   const result = reduceDrawingSession(initialDrawingSession, { type: "BEGIN", tool: "horizontal-line", point: p1, id: "d-2", now: 6 });
   assert.equal(result.committed?.type, "horizontal-line");
@@ -167,6 +179,34 @@ test("changing to Select cancels an active drawing before an empty chart click",
   assert.equal(down.prevented, false);
   assert.deepEqual(controller.getSession(), initialDrawingSession);
   assert.deepEqual(chartOptions.at(-1), { handleScroll: true, handleScale: true });
+});
+
+test("press-drag-release completes a temporary price-change measurement without saving a drawing", () => {
+  const h = createControllerHarness({ initialDrawings: [], initialTool: "price-change", hit: null });
+  h.controller.host = {
+    getBoundingClientRect: () => ({ left: 0, top: 0 }),
+    setPointerCapture() {},
+    hasPointerCapture: () => true,
+    releasePointerCapture() {},
+  };
+
+  h.controller.onPointerDown(pointerEvent());
+  h.controller.onPointerMove({ ...pointerEvent(), clientX: 200, clientY: 20 });
+  h.controller.onPointerUp({ ...pointerEvent(), clientX: 200, clientY: 20 });
+
+  assert.deepEqual(h.controller.getSession(), {
+    phase: "measured",
+    tool: "price-change",
+    start: p1,
+    end: p2,
+  });
+  assert.deepEqual(h.getDrawings(), []);
+  assert.deepEqual(h.changes, []);
+  assert.deepEqual(h.chartOptions, [
+    { handleScroll: false, handleScale: false },
+    { handleScroll: true, handleScale: true },
+  ]);
+  assert.equal(h.tool.current, "price-change");
 });
 
 function createMutationController(initialDrawings = []) {

@@ -7,12 +7,13 @@ import type {
   SeriesAttachedParameter,
   Time,
 } from "lightweight-charts";
-import type { DrawingCoordinateAdapter } from "./coordinates.ts";
+import { toScreenPoint, type DrawingCoordinateAdapter } from "./coordinates.ts";
 import type { DrawingSession } from "./controller.ts";
 import {
   arrowHead,
   buildScreenDrawings,
   hitTestDrawing as hitTestScreenDrawing,
+  priceChangeMetrics,
   type DrawingHit,
   type ScreenDrawing,
   type ScreenPoint,
@@ -22,6 +23,13 @@ import { DEFAULT_DRAWING_STYLE, type Drawing } from "./types.ts";
 const HIT_TOLERANCE = 8;
 const HANDLE_RADIUS = 4;
 const PREVIEW_ID = "__drawing-preview__";
+
+type PriceChangeMeasurement = {
+  start: ScreenPoint;
+  end: ScreenPoint;
+  startPrice: number;
+  endPrice: number;
+};
 
 function selectedIdFor(session: DrawingSession): string | null {
   return session.phase === "selected" || session.phase === "dragging" ? session.selectedId : null;
@@ -147,16 +155,80 @@ function drawScreenDrawing(
   context.restore();
 }
 
+function formatMeasurementPrice(value: number): string {
+  const magnitude = Math.abs(value);
+  return value.toFixed(magnitude > 0 && magnitude < 1 ? 6 : 2);
+}
+
+function drawPriceChangeMeasurement(
+  context: CanvasRenderingContext2D,
+  measurement: PriceChangeMeasurement,
+  paneWidth: number,
+  paneHeight: number,
+): void {
+  const { start, end, startPrice, endPrice } = measurement;
+  const metrics = priceChangeMetrics(startPrice, endPrice);
+  const positive = metrics.absolute >= 0;
+  const color = positive ? "#53c990" : "#e76770";
+  const left = Math.min(start.x, end.x);
+  const top = Math.min(start.y, end.y);
+  const width = Math.max(1, Math.abs(end.x - start.x));
+  const height = Math.max(1, Math.abs(end.y - start.y));
+  const signedPercent = `${metrics.percent >= 0 ? "+" : ""}${metrics.percent.toFixed(2)}%`;
+  const signedAbsolute = `${metrics.absolute >= 0 ? "+" : ""}${formatMeasurementPrice(metrics.absolute)}`;
+  const primaryLabel = `${signedPercent}  ${signedAbsolute}`;
+  const priceLabel = `${formatMeasurementPrice(startPrice)} → ${formatMeasurementPrice(endPrice)}`;
+  const labelWidth = 176;
+  const labelHeight = 42;
+  const labelX = Math.max(4, Math.min(paneWidth - labelWidth - 4, (start.x + end.x) / 2 - labelWidth / 2));
+  const labelY = Math.max(4, Math.min(paneHeight - labelHeight - 4, top - labelHeight - 8));
+
+  context.save();
+  context.globalAlpha = 0.13;
+  context.fillStyle = color;
+  context.fillRect(left, top, width, height);
+  context.restore();
+
+  context.save();
+  context.strokeStyle = color;
+  context.lineWidth = 1;
+  context.setLineDash([5, 4]);
+  context.strokeRect(left, top, width, height);
+  context.beginPath();
+  context.moveTo(start.x, start.y);
+  context.lineTo(end.x, end.y);
+  context.stroke();
+  context.setLineDash([]);
+  context.fillStyle = "rgba(11, 16, 23, 0.96)";
+  context.beginPath();
+  context.roundRect(labelX, labelY, labelWidth, labelHeight, 5);
+  context.fill();
+  context.strokeStyle = color;
+  context.stroke();
+  context.fillStyle = color;
+  context.font = "600 12px ui-sans-serif, system-ui, sans-serif";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(primaryLabel, labelX + labelWidth / 2, labelY + 13);
+  context.fillStyle = "#b8c1cf";
+  context.font = "11px ui-monospace, SFMono-Regular, monospace";
+  context.fillText(priceLabel, labelX + labelWidth / 2, labelY + 30);
+  context.restore();
+}
+
 class DrawingPaneRenderer implements IPrimitivePaneRenderer {
   private readonly getScene: () => readonly ScreenDrawing[];
   private readonly getSelectedId: () => string | null;
+  private readonly getMeasurement: () => PriceChangeMeasurement | null;
 
   constructor(
     getScene: () => readonly ScreenDrawing[],
     getSelectedId: () => string | null,
+    getMeasurement: () => PriceChangeMeasurement | null,
   ) {
     this.getScene = getScene;
     this.getSelectedId = getSelectedId;
+    this.getMeasurement = getMeasurement;
   }
 
   draw(target: CanvasRenderingTarget2D): void {
@@ -165,6 +237,8 @@ class DrawingPaneRenderer implements IPrimitivePaneRenderer {
       for (const drawing of this.getScene()) {
         drawScreenDrawing(context, drawing, mediaSize.width, drawing.id === selectedId);
       }
+      const measurement = this.getMeasurement();
+      if (measurement) drawPriceChangeMeasurement(context, measurement, mediaSize.width, mediaSize.height);
     });
   }
 }
@@ -192,8 +266,9 @@ export class DrawingPrimitive implements ISeriesPrimitive<Time> {
   private coordinateAdapter: DrawingCoordinateAdapter | null = null;
   private requestUpdate: (() => void) | null = null;
   private scene: readonly ScreenDrawing[] = [];
+  private measurement: PriceChangeMeasurement | null = null;
   private selectedId: string | null = null;
-  private readonly paneRenderer = new DrawingPaneRenderer(() => this.scene, () => this.selectedId);
+  private readonly paneRenderer = new DrawingPaneRenderer(() => this.scene, () => this.selectedId, () => this.measurement);
   private readonly views: readonly IPrimitivePaneView[] = [new DrawingPaneView(this.paneRenderer)];
 
   attached({ chart, series, requestUpdate }: SeriesAttachedParameter<Time, "Candlestick">): void {
@@ -213,6 +288,7 @@ export class DrawingPrimitive implements ISeriesPrimitive<Time> {
     this.coordinateAdapter = null;
     this.requestUpdate = null;
     this.scene = [];
+    this.measurement = null;
   }
 
   setState(drawings: readonly Drawing[], session: DrawingSession, candleTimes: readonly number[]): void {
@@ -256,6 +332,7 @@ export class DrawingPrimitive implements ISeriesPrimitive<Time> {
   private rebuildScene(): void {
     if (!this.coordinateAdapter) {
       this.scene = [];
+      this.measurement = null;
       return;
     }
     const scene = buildScreenDrawings(this.drawings, this.candleTimes, this.coordinateAdapter);
@@ -266,6 +343,17 @@ export class DrawingPrimitive implements ISeriesPrimitive<Time> {
         interactive: false,
       })));
     }
+    this.measurement = this.buildMeasurement();
     this.scene = scene;
+  }
+
+  private buildMeasurement(): PriceChangeMeasurement | null {
+    if (!this.coordinateAdapter || (this.session.phase !== "measuring" && this.session.phase !== "measured")) return null;
+    const startPoint = this.session.start;
+    const endPoint = this.session.phase === "measuring" ? this.session.preview : this.session.end;
+    const start = toScreenPoint(startPoint, this.candleTimes, this.coordinateAdapter);
+    const end = toScreenPoint(endPoint, this.candleTimes, this.coordinateAdapter);
+    if (!start || !end) return null;
+    return { start, end, startPrice: startPoint.price, endPrice: endPoint.price };
   }
 }
