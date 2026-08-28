@@ -251,11 +251,13 @@ export class DrawingController {
   }
 
   private readonly onPointerDown = (event: PointerEvent): void => {
+    const tool = this.options.getTool();
+    this.reconcileActiveTool(tool);
+    if (tool === "crosshair") return;
     const screenPoint = this.toHostPoint(event);
     const point = toDrawingPoint(screenPoint, this.coordinateAdapter);
-    const tool = this.options.getTool();
 
-    if (tool === "crosshair" || point === null) return;
+    if (point === null) return;
     if (tool === "select") {
       const hit = this.options.hitTest(screenPoint);
       if (!hit) {
@@ -291,6 +293,9 @@ export class DrawingController {
   };
 
   private readonly onPointerMove = (event: PointerEvent): void => {
+    const tool = this.options.getTool();
+    this.reconcileActiveTool(tool);
+    if (tool === "crosshair") return;
     if (this.session.phase !== "placing-first" && this.session.phase !== "previewing" && this.session.phase !== "dragging") return;
     if (this.activePointerId !== null && event.pointerId !== this.activePointerId) return;
     const point = toDrawingPoint(this.toHostPoint(event), this.coordinateAdapter);
@@ -304,6 +309,7 @@ export class DrawingController {
   };
 
   private readonly onPointerUp = (event: PointerEvent): void => {
+    this.reconcileActiveTool(this.options.getTool());
     if (this.session.phase !== "dragging" || event.pointerId !== this.activePointerId) return;
     event.preventDefault();
     this.dispatch({ type: "END_DRAG" });
@@ -358,6 +364,16 @@ export class DrawingController {
     if (!this.interactionsLocked) return;
     this.interactionsLocked = false;
     this.options.chart.applyOptions({ handleScroll: true, handleScale: true });
+  }
+
+  private reconcileActiveTool(tool: DrawingTool): void {
+    const activeTool = this.session.phase === "placing-first" || this.session.phase === "previewing"
+      ? this.session.tool
+      : this.session.phase === "dragging" ? "select" : null;
+    if (activeTool === null || activeTool === tool) return;
+    this.dispatch({ type: "CANCEL" });
+    this.releasePointer();
+    this.unlockInteractions();
   }
 
   private capturePointer(pointerId: number): void {

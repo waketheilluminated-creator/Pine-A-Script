@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { initialDrawingSession, reduceDrawingSession } from "../lib/drawings/controller.ts";
+import { DrawingController, initialDrawingSession, reduceDrawingSession } from "../lib/drawings/controller.ts";
 
 const p1 = { time: 100, price: 10 };
 const p2 = { time: 200, price: 20 };
@@ -54,4 +54,67 @@ test("drag updates only the selected endpoint", () => {
   );
   const result = reduceDrawingSession(dragging, { type: "DRAG", point: { time: 250, price: 25 }, now: 7 });
   assert.deepEqual(result.updated?.points, [p1, { time: 250, price: 25 }]);
+});
+
+function createController(tool) {
+  const chartOptions = [];
+  const controller = new DrawingController({
+    chart: {
+      applyOptions: (options) => chartOptions.push(options),
+      timeScale: () => ({ coordinateToTime: (x) => x }),
+    },
+    series: { coordinateToPrice: (y) => y },
+    getDrawings: () => [],
+    replaceDrawings() {},
+    getTool: () => tool.current,
+    setTool: (next) => { tool.current = next; },
+    requestRender() {},
+    requestText() {},
+    hitTest: () => null,
+    createId: () => "d-test",
+    now: () => 1,
+  });
+  return { chartOptions, controller };
+}
+
+function pointerEvent() {
+  let prevented = false;
+  return {
+    clientX: 100,
+    clientY: 10,
+    pointerId: 1,
+    preventDefault() { prevented = true; },
+    get prevented() { return prevented; },
+  };
+}
+
+test("changing to Crosshair cancels an active drawing and passes pointer movement through", () => {
+  const tool = { current: "trend-line" };
+  const { chartOptions, controller } = createController(tool);
+  controller.onPointerDown(pointerEvent());
+  assert.deepEqual(chartOptions, [{ handleScroll: false, handleScale: false }]);
+
+  tool.current = "crosshair";
+  const move = pointerEvent();
+  controller.onPointerMove(move);
+
+  assert.equal(move.prevented, false);
+  assert.deepEqual(controller.getSession(), initialDrawingSession);
+  assert.equal(tool.current, "crosshair");
+  assert.deepEqual(chartOptions.at(-1), { handleScroll: true, handleScale: true });
+});
+
+test("changing to Select cancels an active drawing before an empty chart click", () => {
+  const tool = { current: "arrow" };
+  const { chartOptions, controller } = createController(tool);
+  controller.onPointerDown(pointerEvent());
+  assert.deepEqual(chartOptions, [{ handleScroll: false, handleScale: false }]);
+
+  tool.current = "select";
+  const down = pointerEvent();
+  controller.onPointerDown(down);
+
+  assert.equal(down.prevented, false);
+  assert.deepEqual(controller.getSession(), initialDrawingSession);
+  assert.deepEqual(chartOptions.at(-1), { handleScroll: true, handleScale: true });
 });
