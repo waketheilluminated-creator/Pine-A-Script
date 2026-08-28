@@ -33,6 +33,13 @@ test("server-renders the πlab trading workspace", async () => {
   assert.match(html, /aria-valuemin="37"/);
   assert.match(html, /Resize compiler console/);
   assert.match(html, /aria-label="Resize compiler console"[^>]*aria-orientation="horizontal"/);
+  assert.match(html, /aria-label="Select drawing tool"/);
+  assert.match(html, /aria-label="Trend line drawing tool"/);
+  assert.match(html, /aria-label="Horizontal line drawing tool"/);
+  assert.match(html, /aria-label="Arrow drawing tool"/);
+  assert.match(html, /aria-label="Text drawing tool"/);
+  assert.match(html, /aria-label="Crosshair drawing tool"/);
+  assert.match(html, /aria-pressed="true"/);
   assert.match(html, /Create alert/);
   assert.match(html, /AI Analyst/);
   assert.doesNotMatch(html, /Your site is taking shape|react-loading-skeleton/);

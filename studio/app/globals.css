@@ -35,9 +35,12 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 .ai-button:hover { border-color:#7563aa; background:rgba(124,100,204,.24); }
 
 .workspace { min-height: 0; display: grid; grid-template-columns: 44px minmax(0, 1fr) 292px; }
-.left-rail { border-right:1px solid var(--line); padding: 8px 5px; display:flex; flex-direction:column; gap:4px; background:#0c1118; }
-.tool-button { height:34px; color:var(--muted); display:grid; place-items:center; font:600 14px var(--font-geist-mono); }
-.tool-button.active { color:var(--accent); background:rgba(118,231,164,.08); }
+.left-rail { width:44px; border-right:1px solid var(--line); padding:8px 5px; display:flex; flex-direction:column; gap:4px; background:#0c1118; }
+.tool-button { width:34px; height:34px; padding:0; color:var(--muted); display:grid; place-items:center; font:600 14px var(--font-geist-mono); }
+.tool-button:hover { background:var(--panel-2); color:var(--ink); }
+.tool-button.active { color:var(--accent); background:rgba(118,231,164,.14); border-color:rgba(118,231,164,.24); }
+.tool-button svg { width:20px; height:20px; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
+.tool-button:focus-visible { outline:2px solid rgba(118,231,164,.85); outline-offset:1px; }
 .rail-spacer { flex:1; }
 .main-area { min-width:0; min-height:0; display:grid; grid-template-rows: 45px minmax(300px, 1fr) 245px; }
 .chart-toolbar { border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; padding:0 12px; background:rgba(13,18,26,.88); }

@@ -8,6 +8,8 @@ import {
 } from "lightweight-charts";
 import { FALLBACK_MARKETS, nextRecentSymbols, normalizeBybitMarkets, searchMarkets } from "@/lib/market-symbols.js";
 import { COLLAPSED_PANEL_HEIGHT, DEFAULT_PANEL_HEIGHT, isPanelCollapsed, resolvePanelHeight, snapPanelHeight } from "@/lib/panel-layout.js";
+import type { DrawingTool } from "@/lib/drawings/types.ts";
+import { DrawingToolbar } from "@/components/drawing-toolbar";
 import { savePineSource, usePineSource } from "./pine-source";
 
 type Candle = CandlestickData<Time> & { volume?: number };
@@ -99,6 +101,7 @@ export function TradingWorkspace() {
   const [panelHeight, setPanelHeight] = useState(DEFAULT_PANEL_HEIGHT);
   const [consoleHeight, setConsoleHeight] = useState(82);
   const [pineApplied, setPineApplied] = useState(false);
+  const [activeDrawingTool, setActiveDrawingTool] = useState<DrawingTool>("select");
 
   const last = candles.at(-1);
   const first = candles.at(0);
@@ -355,10 +358,7 @@ export function TradingWorkspace() {
       </header>
 
       <section className="workspace">
-        <nav className="left-rail" aria-label="Chart tools">
-          {[["＋", "Cursor"], ["╱", "Trend line"], ["⌁", "Brush"], ["T", "Text"], ["⌖", "Measure"]].map(([icon, title], i) => <button key={title} className={`tool-button ${i === 0 ? "active" : ""}`} title={title}>{icon}</button>)}
-          <span className="rail-spacer" /><button className="tool-button" title="Settings">⚙</button>
-        </nav>
+        <DrawingToolbar activeTool={activeDrawingTool} onToolChange={setActiveDrawingTool} />
 
         <section className="main-area" style={{ gridTemplateRows: `45px minmax(220px, 1fr) ${panelHeight}px` }}>
           <div className="chart-toolbar">
