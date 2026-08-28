@@ -34,8 +34,8 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 .ai-button em { padding:1px 4px; color:#bcaaf9; border:1px solid #524778; border-radius:3px; font:normal 8px var(--font-geist-mono); letter-spacing:.08em; }
 .ai-button:hover { border-color:#7563aa; background:rgba(124,100,204,.24); }
 
-.workspace { min-height: 0; display: grid; grid-template-columns: 44px minmax(0, 1fr) 292px; }
-.left-rail { width:44px; border-right:1px solid var(--line); padding:8px 5px; display:flex; flex-direction:column; gap:4px; background:#0c1118; }
+.workspace { min-height: 0; display: grid; grid-template-columns:minmax(0, 1fr) 292px; }
+.left-rail { width:44px; min-height:0; border-right:1px solid var(--line); padding:8px 5px; display:flex; flex-direction:column; gap:4px; background:#0c1118; }
 .tool-button { width:34px; height:34px; padding:0; color:var(--muted); display:grid; place-items:center; font:600 14px var(--font-geist-mono); }
 .tool-button:hover { background:var(--panel-2); color:var(--ink); }
 .tool-button.active { color:var(--accent); background:rgba(118,231,164,.14); border-color:rgba(118,231,164,.24); }
@@ -43,6 +43,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 .tool-button:focus-visible { outline:2px solid rgba(118,231,164,.85); outline-offset:1px; }
 .rail-spacer { flex:1; }
 .main-area { min-width:0; min-height:0; display:grid; grid-template-rows: 45px minmax(300px, 1fr) 245px; }
+.chart-region { min-width:0; min-height:0; display:grid; grid-template-columns:44px minmax(0,1fr); }
 .chart-toolbar { border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; padding:0 12px; background:rgba(13,18,26,.88); }
 .toolbar-cluster { display:flex; align-items:center; gap:3px; }
 .toolbar-symbol-button { display:flex; align-items:center; gap:7px; padding:6px 8px; color:var(--ink); border:1px solid transparent; border-radius:6px; background:transparent; cursor:pointer; }
@@ -58,7 +59,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 .chart-alert-button { display:flex; align-items:center; gap:5px; padding:6px 8px; color:var(--muted); border:1px solid transparent; border-radius:6px; background:transparent; cursor:pointer; }
 .chart-alert-button span { color:#aeb8c7; font:14px/1 var(--font-geist-mono); }
 .chart-alert-button:hover { color:var(--ink); background:var(--panel-2); }
-.chart-stage { position:relative; min-height:0; background:#0b1017; }
+.chart-stage { min-width:0; position:relative; min-height:0; background:#0b1017; }
 .chart-canvas { position:absolute; inset:0; cursor:inherit; }
 .chart-stage.drawing-cursor-placement, .chart-stage.drawing-cursor-crosshair { cursor:crosshair; }
 .chart-stage.drawing-cursor-select { cursor:default; }
@@ -245,7 +246,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 .ai-send-row button:disabled { opacity:.55; cursor:wait; }
 
 @media (max-width: 980px) {
-  .workspace { grid-template-columns:44px minmax(0,1fr); }
+  .workspace { grid-template-columns:minmax(0,1fr); }
   .right-panel { display:none; }
   .topbar { grid-template-columns:1fr auto; }
   .market-switcher { display:none; }

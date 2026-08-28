@@ -10,8 +10,9 @@ import { FALLBACK_MARKETS, nextRecentSymbols, normalizeBybitMarkets, searchMarke
 import { COLLAPSED_PANEL_HEIGHT, DEFAULT_PANEL_HEIGHT, isPanelCollapsed, resolvePanelHeight, snapPanelHeight } from "@/lib/panel-layout.js";
 import { DrawingController, initialDrawingSession, type DrawingChangeKind, type DrawingSession } from "@/lib/drawings/controller.ts";
 import { DrawingPrimitive } from "@/lib/drawings/primitive.ts";
-import { DrawingSaveScheduler, loadDrawings } from "@/lib/drawings/store.ts";
+import { DrawingSaveScheduler, createDrawingStorage, loadDrawings, type DrawingStorage } from "@/lib/drawings/store.ts";
 import type { Drawing, DrawingPoint, DrawingTool } from "@/lib/drawings/types.ts";
+import { chartDrawingMarket, type ChartDrawingMarket } from "@/lib/drawings/workspace-market.ts";
 import { handleWorkspaceEscape } from "@/lib/drawings/workspace-shortcuts.ts";
 import { DrawingToolbar } from "@/components/drawing-toolbar";
 import { savePineSource, usePineSource } from "./pine-source";
@@ -71,8 +72,9 @@ export function TradingWorkspace() {
   const drawingPrimitiveRef = useRef<DrawingPrimitive | null>(null);
   const drawingControllerRef = useRef<DrawingController | null>(null);
   const drawingSaveSchedulerRef = useRef<DrawingSaveScheduler | null>(null);
+  const drawingStorageRef = useRef<DrawingStorage | null>(null);
   const drawingsRef = useRef<Drawing[]>([]);
-  const drawingMarketRef = useRef({ exchange: "bybit", symbol: "BTCUSDT" });
+  const drawingMarketRef = useRef<ChartDrawingMarket>(chartDrawingMarket("BTCUSDT"));
   const candleTimesRef = useRef<number[]>([]);
   const activeDrawingToolRef = useRef<DrawingTool>("select");
   const [symbol, setSymbol] = useState("BTCUSDT");
@@ -100,7 +102,7 @@ export function TradingWorkspace() {
   const [consoleKind, setConsoleKind] = useState<"normal" | "success" | "error">("normal");
   const [running, setRunning] = useState(false);
   const [derivatives, setDerivatives] = useState<Derivatives | null>(null);
-  const [exchange, setExchange] = useState<"bybit" | "binance" | "okx">("bybit");
+  const [derivativesExchange, setDerivativesExchange] = useState<"bybit" | "binance" | "okx">("bybit");
   const [alerts, setAlerts] = useState<{ id: number; direction: "above" | "below"; price: number; triggered: boolean }[]>([]);
   const [showAlertForm, setShowAlertForm] = useState(false);
   const [alertDirection, setAlertDirection] = useState<"above" | "below">("above");
@@ -124,10 +126,25 @@ export function TradingWorkspace() {
   const [textInputPosition, setTextInputPosition] = useState<{ x: number; y: number } | null>(null);
   const [drawingText, setDrawingText] = useState("");
 
-  const selectDrawingTool = useCallback((tool: DrawingTool) => {
+  const clearDrawingTextEntry = useCallback(() => {
+    setTextAnchor(null);
+    setTextInputPosition(null);
+    setDrawingText("");
+  }, []);
+
+  const applyDrawingTool = useCallback((tool: DrawingTool) => {
     activeDrawingToolRef.current = tool;
     setActiveDrawingTool(tool);
   }, []);
+
+  const changeDrawingToolFromToolbar = useCallback((tool: DrawingTool) => {
+    const controller = drawingControllerRef.current;
+    if (controller) controller.changeTool(tool);
+    else {
+      clearDrawingTextEntry();
+      applyDrawingTool(tool);
+    }
+  }, [applyDrawingTool, clearDrawingTextEntry]);
 
   const last = candles.at(-1);
   const first = candles.at(0);
@@ -154,7 +171,11 @@ export function TradingWorkspace() {
     setActiveSymbolIndex(0);
     setRecentSymbols((current) => {
       const next = nextRecentSymbols(current, market.symbol);
-      window.localStorage.setItem("pilab-recent-symbols", JSON.stringify(next));
+      try {
+        window.localStorage.setItem("pilab-recent-symbols", JSON.stringify(next));
+      } catch {
+        // Recent symbols remain available in React state for this session.
+      }
       return next;
     });
   };
@@ -190,14 +211,16 @@ export function TradingWorkspace() {
     });
     const candleSeries = chart.addSeries(CandlestickSeries, { upColor: "#53c990", downColor: "#e76770", wickUpColor: "#53c990", wickDownColor: "#e76770", borderVisible: false });
     const drawingPrimitive = new DrawingPrimitive();
-    const drawingSaveScheduler = new DrawingSaveScheduler(window.localStorage);
+    const drawingStorage = drawingStorageRef.current ?? createDrawingStorage();
+    drawingStorageRef.current = drawingStorage;
+    const drawingSaveScheduler = new DrawingSaveScheduler(drawingStorage);
     candleSeries.attachPrimitive(drawingPrimitive);
     const replaceDrawings = (next: Drawing[], kind: DrawingChangeKind) => {
       drawingsRef.current = next;
       setDrawings(next);
       if (kind === "commit") {
         const market = drawingMarketRef.current;
-        drawingSaveScheduler.schedule(market.exchange, market.symbol, next);
+        drawingSaveScheduler.schedule(market.venue, market.symbol, next);
       }
     };
     const drawingController = new DrawingController({
@@ -206,8 +229,9 @@ export function TradingWorkspace() {
       getDrawings: () => drawingsRef.current,
       replaceDrawings,
       getTool: () => activeDrawingToolRef.current,
-      setTool: selectDrawingTool,
+      setTool: applyDrawingTool,
       setSession: setDrawingSession,
+      onCancel: clearDrawingTextEntry,
       requestRender: () => drawingPrimitive.setState(drawingsRef.current, drawingController.getSession(), candleTimesRef.current),
       requestText: (point) => {
         const x = chart.timeScale().timeToCoordinate(point.time);
@@ -236,7 +260,7 @@ export function TradingWorkspace() {
       chart.remove();
       chartRef.current = null; candleSeriesRef.current = null; fastSeriesRef.current = null; slowSeriesRef.current = null;
     };
-  }, [selectDrawingTool]);
+  }, [applyDrawingTool, clearDrawingTextEntry]);
 
   useEffect(() => {
     candleSeriesRef.current?.setData(candles);
@@ -254,9 +278,12 @@ export function TradingWorkspace() {
 
   useEffect(() => {
     drawingSaveSchedulerRef.current?.flush();
-    drawingMarketRef.current = { exchange, symbol };
     drawingControllerRef.current?.cancel();
-    const loaded = loadDrawings(window.localStorage, exchange, symbol);
+    const market = chartDrawingMarket(symbol);
+    drawingMarketRef.current = market;
+    const storage = drawingStorageRef.current ?? createDrawingStorage();
+    drawingStorageRef.current = storage;
+    const loaded = loadDrawings(storage, market.venue, market.symbol);
     drawingsRef.current = loaded;
     drawingPrimitiveRef.current?.setState(
       loaded,
@@ -264,13 +291,11 @@ export function TradingWorkspace() {
       candleTimesRef.current,
     );
     const timer = window.setTimeout(() => {
-      setTextAnchor(null);
-      setTextInputPosition(null);
-      setDrawingText("");
+      clearDrawingTextEntry();
       setDrawings(loaded);
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [exchange, symbol]);
+  }, [clearDrawingTextEntry, symbol]);
 
   useEffect(() => {
     let cancelled = false;
@@ -298,13 +323,13 @@ export function TradingWorkspace() {
 
   useEffect(() => {
     let active = true;
-    const load = () => fetch(`/api/derivatives?exchange=${exchange}&symbol=${encodeURIComponent(symbol.replace("USDT", "/USDT:USDT"))}`)
+    const load = () => fetch(`/api/derivatives?exchange=${derivativesExchange}&symbol=${encodeURIComponent(symbol.replace("USDT", "/USDT:USDT"))}`)
       .then((r) => r.ok ? r.json() : Promise.reject(new Error("Derivatives feed unavailable")))
       .then((data) => { if (active) setDerivatives(data); })
       .catch(() => { if (active) setDerivatives(null); });
     load(); const timer = window.setInterval(load, 30000);
     return () => { active = false; clearInterval(timer); };
-  }, [symbol, exchange]);
+  }, [symbol, derivativesExchange]);
 
   useEffect(() => {
     const price = last?.close;
@@ -369,9 +394,7 @@ export function TradingWorkspace() {
           closeSearch: () => setSymbolSearchOpen(false),
           cancelDrawing: () => {
             drawingControllerRef.current?.cancel();
-            setTextAnchor(null);
-            setTextInputPosition(null);
-            setDrawingText("");
+            if (!drawingControllerRef.current) clearDrawingTextEntry();
           },
         });
       }
@@ -382,15 +405,13 @@ export function TradingWorkspace() {
     };
     window.addEventListener("keydown", handleWorkspaceShortcut, true);
     return () => window.removeEventListener("keydown", handleWorkspaceShortcut, true);
-  }, [runPine, symbolSearchOpen]);
+  }, [clearDrawingTextEntry, runPine, symbolSearchOpen]);
 
   const commitDrawingText = (event: ReactFormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!drawingText.trim()) return;
     if (!drawingControllerRef.current?.commitText(drawingText)) return;
-    setTextAnchor(null);
-    setTextInputPosition(null);
-    setDrawingText("");
+    clearDrawingTextEntry();
   };
 
   const createAlert = () => {
@@ -459,7 +480,7 @@ export function TradingWorkspace() {
           builtIn: { ema9: ema9.at(-1)?.value ?? null, ema21: ema21.at(-1)?.value ?? null, ema9Visible: showFast, ema21Visible: showSlow },
           customPine: { source: pine, plots: pinePlots.map((plot, index) => ({ title: plot.title || `Plot ${index + 1}`, recentValues: plot.data?.slice(-30) ?? [] })) },
         },
-        derivatives: derivatives ? { sourceExchange: exchange, openInterestUsd: derivatives.openInterestValue, openInterestBase: derivatives.openInterestAmount, fundingRate: derivatives.fundingRate, markPrice: derivatives.markPrice, indexPrice: derivatives.indexPrice, nextFundingTimestamp: derivatives.nextFundingTimestamp } : null,
+        derivatives: derivatives ? { sourceExchange: derivativesExchange, openInterestUsd: derivatives.openInterestValue, openInterestBase: derivatives.openInterestAmount, fundingRate: derivatives.fundingRate, markPrice: derivatives.markPrice, indexPrice: derivatives.indexPrice, nextFundingTimestamp: derivatives.nextFundingTimestamp } : null,
       };
       const response = await fetch("/api/ai/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint: aiEndpoint, apiKey: aiKey, model: aiModel, question, context }) });
       const payload = await response.json();
@@ -480,8 +501,6 @@ export function TradingWorkspace() {
       </header>
 
       <section className="workspace">
-        <DrawingToolbar activeTool={activeDrawingTool} onToolChange={selectDrawingTool} />
-
         <section className="main-area" style={{ gridTemplateRows: `45px minmax(220px, 1fr) ${panelHeight}px` }}>
           <div className="chart-toolbar">
             <div className="toolbar-cluster">
@@ -491,7 +510,9 @@ export function TradingWorkspace() {
             <div className="toolbar-cluster"><button className="chart-alert-button" aria-label="Create alert (Alt+A)" title="Create alert (Alt+A)" onClick={() => setShowAlertForm(true)}><span aria-hidden="true">◷</span> Alert</button><span className="toolbar-separator" /><span className={`live-dot ${connected ? "online" : ""}`} /><span className="live-copy">{connected ? "Live" : "Connecting"}</span><span className="toolbar-separator" /><button className="time-button" onClick={() => chartRef.current?.timeScale().fitContent()}>Fit</button></div>
           </div>
 
-          <div className={`chart-stage ${drawingCursorClass}`} data-drawing-phase={drawingSession.phase} data-drawing-count={drawings.length}>
+          <div className="chart-region">
+            <DrawingToolbar activeTool={activeDrawingTool} onToolChange={changeDrawingToolFromToolbar} />
+            <div className={`chart-stage ${drawingCursorClass}`} data-drawing-phase={drawingSession.phase} data-drawing-count={drawings.length}>
             <div className="chart-legend">
               <div className="market-head"><h1>{symbol.replace("USDT", "/USDT")} Perpetual</h1><span className="exchange-pill">BYBIT</span></div>
               <div className="quote-line"><span className="price">{formatPrice(last?.close ?? null)}</span><span className={change >= 0 ? "positive" : "negative"}>{change >= 0 ? "+" : ""}{change.toFixed(2)}%</span><span>H {formatPrice(last?.high ?? null)}</span><span>L {formatPrice(last?.low ?? null)}</span></div>
@@ -506,13 +527,12 @@ export function TradingWorkspace() {
                 if (event.key === "Escape") {
                   event.preventDefault();
                   drawingControllerRef.current?.cancel();
-                  setTextAnchor(null);
-                  setTextInputPosition(null);
-                  setDrawingText("");
+                  if (!drawingControllerRef.current) clearDrawingTextEntry();
                 }
               }} /></label>
             </form>}
             {loading && <div className="chart-loading">Loading market data…</div>}
+            </div>
           </div>
 
           <section className={`bottom-panel ${panelCollapsed ? "collapsed" : ""}`}>
@@ -533,14 +553,14 @@ export function TradingWorkspace() {
 
         <aside className="right-panel">
           <section className="side-section">
-            <div className="section-title-row"><h2 className="section-kicker">Derivatives pulse</h2><select aria-label="Derivatives exchange" value={exchange} onChange={(event) => setExchange(event.target.value as "bybit" | "binance" | "okx")}><option value="bybit">Bybit</option><option value="binance">Binance</option><option value="okx">OKX</option></select></div>
+            <div className="section-title-row"><h2 className="section-kicker">Derivatives pulse</h2><select aria-label="Derivatives exchange" value={derivativesExchange} onChange={(event) => setDerivativesExchange(event.target.value as "bybit" | "binance" | "okx")}><option value="bybit">Bybit</option><option value="binance">Binance</option><option value="okx">OKX</option></select></div>
             <div className="metric-grid">
               <div className="metric-card"><span>Open interest</span><strong>${formatCompact(derivatives?.openInterestValue ?? null)}</strong><small>{formatCompact(derivatives?.openInterestAmount ?? null)} {symbol.replace("USDT", "")}</small></div>
               <div className="metric-card"><span>Funding / 8h</span><strong className={(derivatives?.fundingRate ?? 0) >= 0 ? "positive" : "negative"}>{derivatives?.fundingRate == null ? "—" : `${(derivatives.fundingRate * 100).toFixed(4)}%`}</strong><small>{derivatives?.nextFundingTimestamp ? `Next ${new Date(derivatives.nextFundingTimestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "Current rate"}</small></div>
               <div className="metric-card"><span>Mark price</span><strong>{formatPrice(derivatives?.markPrice ?? null)}</strong><small>Fair price</small></div>
               <div className="metric-card"><span>Basis</span><strong className={((derivatives?.markPrice ?? 0) - (derivatives?.indexPrice ?? 0)) >= 0 ? "positive" : "negative"}>{derivatives?.markPrice && derivatives?.indexPrice ? `${(((derivatives.markPrice - derivatives.indexPrice) / derivatives.indexPrice) * 100).toFixed(3)}%` : "—"}</strong><small>Mark vs index</small></div>
             </div>
-            <div className="data-source"><span>Pine: open_interest · funding_rate</span><code>CCXT · {derivatives?.exchange || exchange}</code></div>
+            <div className="data-source"><span>Pine: open_interest · funding_rate</span><code>CCXT · {derivatives?.exchange || derivativesExchange}</code></div>
           </section>
           <section className="side-section">
             <h2 className="section-kicker">Indicators</h2>

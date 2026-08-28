@@ -88,6 +88,56 @@ function pointerEvent() {
   };
 }
 
+function createControllerHarness({
+  initialDrawings = [trend],
+  initialTool = "select",
+  hit = { drawingId: "d-1", part: "point-1" },
+} = {}) {
+  let drawings = [...initialDrawings];
+  const tool = { current: initialTool };
+  const changes = [];
+  const chartOptions = [];
+  const cancellations = [];
+  const textRequests = [];
+  const controller = new DrawingController({
+    chart: {
+      applyOptions: (options) => chartOptions.push(options),
+      timeScale: () => ({ coordinateToTime: (x) => x }),
+    },
+    series: { coordinateToPrice: (y) => y },
+    getDrawings: () => drawings,
+    replaceDrawings(next, kind) {
+      drawings = next;
+      changes.push({ drawings: next, kind });
+    },
+    getTool: () => tool.current,
+    setTool: (next) => { tool.current = next; },
+    requestRender() {},
+    requestText: (point) => textRequests.push(point),
+    onCancel: () => cancellations.push("cancel"),
+    hitTest: () => hit,
+    createId: () => "d-new",
+    now: () => 10,
+  });
+  return { cancellations, changes, chartOptions, controller, getDrawings: () => drawings, textRequests, tool };
+}
+
+function createMovedDragHarness() {
+  const harness = createControllerHarness();
+  harness.controller.onPointerDown(pointerEvent());
+  harness.controller.onPointerMove({ ...pointerEvent(), clientX: 250, clientY: 25 });
+  assert.deepEqual(harness.getDrawings()[0].points, [p1, { time: 250, price: 25 }]);
+  return harness;
+}
+
+function createTextPlacementHarness() {
+  const harness = createControllerHarness({ initialDrawings: [], initialTool: "text", hit: null });
+  harness.controller.onPointerDown(pointerEvent());
+  assert.equal(harness.controller.getSession().phase, "placing-first");
+  assert.equal(harness.textRequests.length, 1);
+  return harness;
+}
+
 test("changing to Crosshair cancels an active drawing and passes pointer movement through", () => {
   const tool = { current: "trend-line" };
   const { chartOptions, controller } = createController(tool);
@@ -167,4 +217,57 @@ test("marks completed creates and deletes as commits", () => {
   assert.equal(created.controller.deleteSelected(), true);
   assert.equal(created.changes.at(-1)?.kind, "commit");
   assert.deepEqual(created.getDrawings(), []);
+});
+
+test("cancelling a moved drag restores the original before a later commit", () => {
+  const { changes, controller, getDrawings } = createControllerHarness();
+  controller.dispatch({ type: "START_DRAG", drawing: trend, part: "point-1", point: p2 });
+  controller.dispatch({ type: "DRAG", point: { time: 250, price: 25 }, now: 7 });
+  assert.deepEqual(getDrawings()[0].points, [p1, { time: 250, price: 25 }]);
+
+  controller.cancel();
+
+  assert.deepEqual(getDrawings(), [trend]);
+  assert.equal(changes.at(-1).kind, "transient");
+  controller.dispatch({ type: "BEGIN", tool: "horizontal-line", point: p1, id: "d-new", now: 10 });
+  assert.equal(changes.at(-1).kind, "commit");
+  assert.deepEqual(changes.at(-1).drawings[0], trend);
+});
+
+for (const [name, trigger] of [
+  ["Escape", (h) => h.controller.onKeyDown({ key: "Escape", preventDefault() {} })],
+  ["pointer cancellation", (h) => h.controller.onPointerCancel({ pointerId: 1 })],
+  ["window blur", (h) => h.controller.onWindowBlur()],
+  ["toolbar tool change", (h) => h.controller.changeTool("crosshair")],
+]) {
+  test(`${name} rolls a drag back and unlocks chart interaction`, () => {
+    const h = createMovedDragHarness();
+    trigger(h);
+    assert.deepEqual(h.getDrawings(), [trend]);
+    assert.deepEqual(h.chartOptions.at(-1), { handleScroll: true, handleScale: true });
+    assert.equal(h.cancellations.length, 1);
+    assert.equal(h.changes.at(-1).kind, "transient");
+  });
+}
+
+test("changeTool cancels text placement before activating the requested tool", () => {
+  const h = createTextPlacementHarness();
+  assert.deepEqual(h.chartOptions.at(-1), { handleScroll: false, handleScale: false });
+  h.controller.changeTool("crosshair");
+  assert.deepEqual(h.controller.getSession(), initialDrawingSession);
+  assert.equal(h.tool.current, "crosshair");
+  assert.equal(h.cancellations.length, 1);
+  assert.deepEqual(h.chartOptions.at(-1), { handleScroll: true, handleScale: true });
+});
+
+test("blur and external tool reconciliation notify the text owner", () => {
+  const blur = createTextPlacementHarness();
+  blur.controller.onWindowBlur();
+  assert.deepEqual(blur.cancellations, ["cancel"]);
+
+  const reconciled = createTextPlacementHarness();
+  reconciled.tool.current = "crosshair";
+  reconciled.controller.onPointerMove(pointerEvent());
+  assert.deepEqual(reconciled.cancellations, ["cancel"]);
+  assert.deepEqual(reconciled.controller.getSession(), initialDrawingSession);
 });

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  DrawingSaveScheduler, drawingStorageKey, loadDrawings, parseDrawingCollection, saveDrawings,
+  DrawingSaveScheduler, createDrawingStorage, drawingStorageKey, loadDrawings, parseDrawingCollection, saveDrawings,
 } from "../lib/drawings/store.ts";
 
 const trend = {
@@ -26,6 +26,30 @@ test("round-trips drawings and survives storage errors", () => {
   assert.equal(saveDrawings(storage, "bybit", "BTCUSDT", [trend]), true);
   assert.deepEqual(loadDrawings(storage, "bybit", "BTCUSDT"), [trend]);
   assert.equal(saveDrawings({ setItem() { throw new Error("quota"); } }, "bybit", "BTCUSDT", [trend]), false);
+});
+
+test("falls back to session memory when localStorage acquisition throws", () => {
+  let acquisitions = 0;
+  const storage = createDrawingStorage(() => {
+    acquisitions += 1;
+    const error = new Error("storage denied");
+    error.name = "SecurityError";
+    throw error;
+  });
+
+  assert.equal(acquisitions, 1);
+  assert.equal(saveDrawings(storage, "bybit", "BTCUSDT", [trend]), true);
+  assert.deepEqual(loadDrawings(storage, "bybit", "BTCUSDT"), [trend]);
+});
+
+test("keeps the latest session snapshot when storage methods throw", () => {
+  const storage = createDrawingStorage(() => ({
+    getItem() { throw new Error("read denied"); },
+    setItem() { throw new Error("quota"); },
+  }));
+
+  assert.doesNotThrow(() => saveDrawings(storage, "bybit", "BTCUSDT", [trend]));
+  assert.deepEqual(loadDrawings(storage, "bybit", "BTCUSDT"), [trend]);
 });
 
 test("flushes a captured drawing snapshot under its original market identity", () => {

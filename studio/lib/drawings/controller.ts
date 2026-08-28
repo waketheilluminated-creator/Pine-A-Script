@@ -168,6 +168,7 @@ export type DrawingControllerOptions = {
   setSession?(session: DrawingSession): void;
   requestRender(): void;
   requestText(point: DrawingPoint): void;
+  onCancel?(): void;
   /** Returns the frontmost hit from the shared primitive scene. */
   hitTest(point: ScreenPoint): DrawingHit | null;
   createId?(): string;
@@ -223,10 +224,12 @@ export class DrawingController {
   }
 
   cancel(): void {
-    this.dispatch({ type: "CANCEL" });
-    this.releasePointer();
-    this.unlockInteractions();
-    this.options.setTool("select");
+    this.cancelInteraction(true);
+  }
+
+  changeTool(tool: DrawingTool): void {
+    this.cancelInteraction(false);
+    this.options.setTool(tool);
   }
 
   commitText(text: string): boolean {
@@ -374,9 +377,21 @@ export class DrawingController {
       ? this.session.tool
       : this.session.phase === "dragging" ? "select" : null;
     if (activeTool === null || activeTool === tool) return;
+    this.cancelInteraction(false);
+  }
+
+  private cancelInteraction(resetTool: boolean): void {
+    const previous = this.session;
+    if (previous.phase === "dragging" && previous.updated !== undefined) {
+      this.options.replaceDrawings(this.options.getDrawings().map((drawing) => (
+        drawing.id === previous.original.id ? previous.original : drawing
+      )), "transient");
+    }
     this.dispatch({ type: "CANCEL" });
     this.releasePointer();
     this.unlockInteractions();
+    this.options.onCancel?.();
+    if (resetTool) this.options.setTool("select");
   }
 
   private capturePointer(pointerId: number): void {

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 async function worker() {
@@ -13,15 +12,25 @@ const env = {
 };
 const context = { waitUntil() {}, passThroughOnException() {} };
 
-test("wires drawings into the chart workspace and market-scoped storage", async () => {
-  const source = await readFile(new URL("../app/trading-workspace.tsx", import.meta.url), "utf8");
-  assert.match(source, /candleSeries\.attachPrimitive\(drawingPrimitive\)/);
-  assert.match(source, /loadDrawings\(window\.localStorage, exchange, symbol\)/);
-  assert.match(source, /new DrawingSaveScheduler\(window\.localStorage\)/);
-  assert.match(source, /kind === "commit"/);
-  assert.match(source, /drawingSaveSchedulerRef\.current\?\.flush\(\)/);
-  assert.match(source, /handleWorkspaceEscape\(\{/);
-  assert.match(source, /drawing-text-input/);
+function requiredIndex(html, token) {
+  const index = html.indexOf(token);
+  assert.notEqual(index, -1, `missing rendered token: ${token}`);
+  return index;
+}
+
+test("renders drawing tools between the chart toolbar and editor", async () => {
+  const app = await worker();
+  const response = await app.fetch(new Request("http://localhost/", { headers: { accept: "text/html" } }), env, context);
+  const html = await response.text();
+  const chartToolbar = requiredIndex(html, 'class="chart-toolbar"');
+  const chartRegion = requiredIndex(html, 'class="chart-region"');
+  const drawingToolbar = requiredIndex(html, 'aria-label="Chart drawing tools"');
+  const chartStage = requiredIndex(html, 'class="chart-stage');
+  const bottomPanel = requiredIndex(html, 'class="bottom-panel');
+  assert.ok(chartToolbar < chartRegion);
+  assert.ok(chartRegion < drawingToolbar);
+  assert.ok(drawingToolbar < chartStage);
+  assert.ok(chartStage < bottomPanel);
 });
 
 test("server-renders the πlab trading workspace", async () => {
