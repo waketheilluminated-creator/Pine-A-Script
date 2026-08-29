@@ -60,6 +60,7 @@ test("server-renders the πlab trading workspace", async () => {
   assert.match(html, /aria-label="Arrow drawing tool"/);
   assert.match(html, /aria-label="Text drawing tool"/);
   assert.match(html, /aria-label="Measure price change drawing tool"/);
+  assert.match(html, /data-icon="ruler"/);
   assert.match(html, /aria-label="Crosshair drawing tool"/);
   assert.match(html, /aria-pressed="true"/);
   assert.match(html, /Create alert/);

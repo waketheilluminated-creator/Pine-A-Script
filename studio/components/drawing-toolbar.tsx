@@ -31,7 +31,15 @@ function TextIcon() {
 }
 
 function PriceChangeIcon() {
-  return <IconFrame><path d="M4 15 15 4M4 11v4h4M11 4h4v4" /><line x1="6" y1="7" x2="13" y2="14" strokeDasharray="2 2" /></IconFrame>;
+  return <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true" data-icon="ruler">
+    <g transform="rotate(-45 10 10)">
+      <rect x="3" y="7" width="14" height="6" rx="1.5" />
+      <line x1="6" y1="7" x2="6" y2="10" />
+      <line x1="9" y1="7" x2="9" y2="9" />
+      <line x1="12" y1="7" x2="12" y2="10" />
+      <line x1="15" y1="7" x2="15" y2="9" />
+    </g>
+  </svg>;
 }
 
 function CrosshairIcon() {

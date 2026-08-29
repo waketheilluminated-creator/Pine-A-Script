@@ -304,9 +304,13 @@ export class DrawingController {
     event.preventDefault();
     if (tool === "price-change") {
       if (this.session.phase === "measured") this.dispatch({ type: "CANCEL" });
+      if (this.session.phase === "measuring") {
+        this.dispatch({ type: "MEASURE_END", point });
+        this.unlockInteractions();
+        return;
+      }
       if (this.session.phase !== "idle") return;
       this.dispatch({ type: "BEGIN", tool, point });
-      this.capturePointer(event.pointerId);
       this.lockInteractions();
       return;
     }
@@ -346,18 +350,6 @@ export class DrawingController {
 
   private readonly onPointerUp = (event: PointerEvent): void => {
     this.reconcileActiveTool(this.options.getTool());
-    if (this.session.phase === "measuring" && event.pointerId === this.activePointerId) {
-      const point = toDrawingPoint(this.toHostPoint(event), this.coordinateAdapter);
-      if (point === null) {
-        this.cancel();
-        return;
-      }
-      event.preventDefault();
-      this.dispatch({ type: "MEASURE_END", point });
-      this.releasePointer();
-      this.unlockInteractions();
-      return;
-    }
     if (this.session.phase !== "dragging" || event.pointerId !== this.activePointerId) return;
     event.preventDefault();
     this.dispatch({ type: "END_DRAG" });

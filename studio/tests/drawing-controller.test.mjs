@@ -181,18 +181,27 @@ test("changing to Select cancels an active drawing before an empty chart click",
   assert.deepEqual(chartOptions.at(-1), { handleScroll: true, handleScale: true });
 });
 
-test("press-drag-release completes a temporary price-change measurement without saving a drawing", () => {
+test("first click starts a live price-change preview and second click completes it", () => {
   const h = createControllerHarness({ initialDrawings: [], initialTool: "price-change", hit: null });
-  h.controller.host = {
-    getBoundingClientRect: () => ({ left: 0, top: 0 }),
-    setPointerCapture() {},
-    hasPointerCapture: () => true,
-    releasePointerCapture() {},
-  };
 
   h.controller.onPointerDown(pointerEvent());
+  h.controller.onPointerUp(pointerEvent());
+  assert.deepEqual(h.controller.getSession(), {
+    phase: "measuring",
+    tool: "price-change",
+    start: p1,
+    preview: p1,
+  });
+
   h.controller.onPointerMove({ ...pointerEvent(), clientX: 200, clientY: 20 });
-  h.controller.onPointerUp({ ...pointerEvent(), clientX: 200, clientY: 20 });
+  assert.deepEqual(h.controller.getSession(), {
+    phase: "measuring",
+    tool: "price-change",
+    start: p1,
+    preview: p2,
+  });
+
+  h.controller.onPointerDown({ ...pointerEvent(), clientX: 200, clientY: 20 });
 
   assert.deepEqual(h.controller.getSession(), {
     phase: "measured",
